@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
@@ -51,22 +50,31 @@ PLATFORMS: list[Platform] = [
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Domain-level setup (once per HA session — registers the custom Lovelace card)
+# Lovelace card registration
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Register the PIK Schedule Card as a Lovelace frontend resource."""
+_CARD_REGISTERED = False  # One-time guard per HA session
+
+CARD_URL = f"/hacsfiles/{DOMAIN}/pik-schedule-card.js"
+CARD_LOCAL_PATH = os.path.join(os.path.dirname(__file__), "www", "pik-schedule-card.js")
+
+
+def _register_card(hass: HomeAssistant) -> None:
+    """Register the PIK Schedule Card JS as a Lovelace resource (once)."""
+    global _CARD_REGISTERED  # noqa: PLW0603
+    if _CARD_REGISTERED:
+        return
+    _CARD_REGISTERED = True
+
+    # Serve the JS file under a static URL
+    hass.http.register_static_path(CARD_URL, CARD_LOCAL_PATH, cache_headers=False)
+
+    # Inject into Lovelace frontend so the card is available without manual
+    # resource configuration.
     from homeassistant.components.frontend import add_extra_js_url
 
-    www_dir = os.path.join(os.path.dirname(__file__), "www")
-    card_path = os.path.join(www_dir, "pik-schedule-card.js")
-
-    hass.http.register_static_path(
-        f"/{DOMAIN}/pik-schedule-card.js", card_path, cache_headers=False
-    )
-    add_extra_js_url(hass, f"/{DOMAIN}/pik-schedule-card.js")
-
-    return True
+    add_extra_js_url(hass, CARD_URL)
+    _LOGGER.info("PIK Schedule Card registered at %s", CARD_URL)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -76,6 +84,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PIK Outlet from a config entry."""
     from homeassistant.components.bluetooth import async_ble_device_from_address
+
+    # Register the custom Lovelace card (idempotent, first entry wins)
+    _register_card(hass)
 
     address: str = entry.data[CONF_ADDRESS]
 
