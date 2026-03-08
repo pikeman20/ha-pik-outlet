@@ -45,6 +45,35 @@
       "socket_4_child_lock": { "name": "Socket 4 Child Lock" },
       "socket_5_child_lock": { "name": "Socket 5 Child Lock" },
       "socket_6_child_lock": { "name": "Socket 6 Child Lock" }
+    },
+    "select": {
+      "socket_1_mode": { "name": "Socket 1 Mode" },
+      "socket_2_mode": { "name": "Socket 2 Mode" },
+      "socket_3_mode": { "name": "Socket 3 Mode" },
+      "socket_4_mode": { "name": "Socket 4 Mode" },
+      "socket_5_mode": { "name": "Socket 5 Mode" },
+      "socket_6_mode": { "name": "Socket 6 Mode" },
+      "master_mode": { "name": "Master Mode" },
+      "socket_1_schedule_days": { "name": "Socket 1 Schedule Days" },
+      "socket_2_schedule_days": { "name": "Socket 2 Schedule Days" },
+      "socket_3_schedule_days": { "name": "Socket 3 Schedule Days" },
+      "socket_4_schedule_days": { "name": "Socket 4 Schedule Days" },
+      "socket_5_schedule_days": { "name": "Socket 5 Schedule Days" },
+      "socket_6_schedule_days": { "name": "Socket 6 Schedule Days" }
+    },
+    "time": {
+      "socket_1_schedule_on": { "name": "Socket 1 Schedule ON" },
+      "socket_1_schedule_off": { "name": "Socket 1 Schedule OFF" },
+      "socket_2_schedule_on": { "name": "Socket 2 Schedule ON" },
+      "socket_2_schedule_off": { "name": "Socket 2 Schedule OFF" },
+      "socket_3_schedule_on": { "name": "Socket 3 Schedule ON" },
+      "socket_3_schedule_off": { "name": "Socket 3 Schedule OFF" },
+      "socket_4_schedule_on": { "name": "Socket 4 Schedule ON" },
+      "socket_4_schedule_off": { "name": "Socket 4 Schedule OFF" },
+      "socket_5_schedule_on": { "name": "Socket 5 Schedule ON" },
+      "socket_5_schedule_off": { "name": "Socket 5 Schedule OFF" },
+      "socket_6_schedule_on": { "name": "Socket 6 Schedule ON" },
+      "socket_6_schedule_off": { "name": "Socket 6 Schedule OFF" }
     }
   },
   "services": {
@@ -80,7 +109,7 @@
         },
         "days": {
           "name": "Days Bitmask",
-          "description": "Weekday bitmask (0-127). bit0=Sun, bit1=Mon, bit2=Tue, bit3=Wed, bit4=Thu, bit5=Fri, bit6=Sat. Example: 62 = Mon-Sat."
+          "description": "Weekday bitmask (0-127). bit0=Sun, bit1=Mon, bit2=Tue, bit3=Wed, bit4=Thu, bit5=Fri, bit6=Sat. Example: 62 = Mon-Fri, 126 = Mon-Sat, 127 = Every day."
         },
         "hour_on": {
           "name": "Turn-ON Hour",

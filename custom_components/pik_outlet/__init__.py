@@ -5,6 +5,8 @@ Provides control and monitoring of PIK's 6-channel BLE smart outlet:
 * 6 × Switch entities (timer enable per socket)
 * 6 × Select entities (mode: Off / Manual / Cloud per socket)
 * 1 × Select entity (master mode for all sockets)
+* 6 × Select entities (schedule day pattern per socket)
+* 12 × Time entities (schedule ON/OFF time per socket)
 * 1 × Binary sensor (global child lock)
 * 6 × Binary sensor (per-socket child lock)
 * 4 × Sensor entities (voltage, current, power, frequency)
@@ -42,6 +44,7 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
+    Platform.TIME,
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════

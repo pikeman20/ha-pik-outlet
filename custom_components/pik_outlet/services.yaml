@@ -58,7 +58,7 @@ set_timer_profile:
       name: Days Bitmask
       description: >-
         Weekday bitmask (0-127). bit0=Sun, bit1=Mon, bit2=Tue, bit3=Wed,
-        bit4=Thu, bit5=Fri, bit6=Sat. Examples: 62=Mon-Sat, 127=Every day,
+        bit4=Thu, bit5=Fri, bit6=Sat. Examples: 62=Mon-Fri, 126=Mon-Sat, 127=Every day,
         65=Sun+Sat (weekends).
       required: true
       selector:
