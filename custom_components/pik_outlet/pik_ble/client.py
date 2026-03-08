@@ -39,7 +39,7 @@ NOTIFY_CHAR_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 # ── Protocol regex patterns ──────────────────────────────────────────────────
 RE_OK = re.compile(r"^PIK-NOTIF:OK$")
 RE_ERR = re.compile(r"^PIK-NOTIF:ERROR$")
-RE_SK = re.compile(r"^PIK-NOTIF:SK:([1-6]):M=(OFF|MAN|CLD):R=([01])$")
+RE_SK = re.compile(r"^PIK-NOTIF:SK:([1-6]):M=(OFF|MAN|CLD):R=([01])(?::L=([01]))?$")
 RE_MST = re.compile(r"^PIK-NOTIF:MST:M=(OFF|MAN|CLD):LOCK=([01])$")
 RE_ENERGY = re.compile(r"^PIK-NOTIF:ENERGY:V=(\d+):I=(\d+):P=(\d+):F=(\d+)$")
 RE_RTC = re.compile(r"^PIK-NOTIF:RTC:(.+)$")
@@ -67,6 +67,7 @@ class SocketState:
     """Runtime state of one socket."""
     mode: str = "OFF"   # "OFF" | "MAN" | "CLD"
     relay: bool = False
+    lock: bool = False  # per-socket child lock
 
 
 @dataclass
@@ -87,6 +88,17 @@ class MasterState:
 
 
 @dataclass
+class TimerProfile:
+    """Cached timer profile (write-only — device has no read-back command)."""
+    days: int = 0           # weekday bitmask 0-127
+    hour_on: int = 0
+    minute_on: int = 0
+    hour_off: int = 0
+    minute_off: int = 0
+    enabled: bool = False
+
+
+@dataclass
 class DeviceState:
     """Aggregate device state — updated in-place by the BLE client."""
     sockets: list[SocketState] = field(
@@ -96,6 +108,11 @@ class DeviceState:
     energy: EnergyState = field(default_factory=EnergyState)
     rtc_text: str = ""          # e.g. "2026-3-8:10:30:0:DOW=1" or "HALTED"
     timer_enable: str = "000000"  # 6 chars, one per socket
+    timer_profiles: list[list[TimerProfile]] = field(
+        default_factory=lambda: [
+            [TimerProfile() for _ in range(6)] for _ in range(SOCKET_COUNT)
+        ]
+    )
     connected: bool = False
 
 
@@ -281,6 +298,9 @@ class PikBLEClient:
             idx = int(m.group(1)) - 1
             self._state.sockets[idx].mode = m.group(2)
             self._state.sockets[idx].relay = m.group(3) == "1"
+            lock_group = m.group(4)
+            if lock_group is not None:
+                self._state.sockets[idx].lock = lock_group == "1"
             return True
 
         m = RE_MST.match(line)
@@ -421,13 +441,28 @@ class PikBLEClient:
         minute_off: int,
         enabled: bool,
     ) -> bool:
-        """Set a timer profile.  *socket* and *profile* are 1-based."""
+        """Set a timer profile.  *socket* and *profile* are 1-based.
+
+        Also caches the profile locally since the device has no read-back cmd.
+        """
         en = 1 if enabled else 0
         cmd = (
             f"TIMER_SET:{socket}:{profile}:{days}"
             f":{hour_on}:{minute_on}:{hour_off}:{minute_off}:{en}"
         )
         ok, _ = await self.send_command(cmd)
+        if ok:
+            # Cache locally (0-based indices)
+            si = socket - 1
+            pi = profile - 1
+            if 0 <= si < SOCKET_COUNT and 0 <= pi < 6:
+                p = self._state.timer_profiles[si][pi]
+                p.days = days
+                p.hour_on = hour_on
+                p.minute_on = minute_on
+                p.hour_off = hour_off
+                p.minute_off = minute_off
+                p.enabled = enabled
         return ok
 
     async def send_at_command(self, at_cmd: str) -> tuple[bool, list[str]]:

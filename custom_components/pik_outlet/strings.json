@@ -22,6 +22,31 @@
       "cannot_connect": "Could not connect to the device."
     }
   },
+  "entity": {
+    "switch": {
+      "socket_1": { "name": "Socket 1" },
+      "socket_2": { "name": "Socket 2" },
+      "socket_3": { "name": "Socket 3" },
+      "socket_4": { "name": "Socket 4" },
+      "socket_5": { "name": "Socket 5" },
+      "socket_6": { "name": "Socket 6" },
+      "socket_1_timer_enable": { "name": "Socket 1 Timer" },
+      "socket_2_timer_enable": { "name": "Socket 2 Timer" },
+      "socket_3_timer_enable": { "name": "Socket 3 Timer" },
+      "socket_4_timer_enable": { "name": "Socket 4 Timer" },
+      "socket_5_timer_enable": { "name": "Socket 5 Timer" },
+      "socket_6_timer_enable": { "name": "Socket 6 Timer" }
+    },
+    "binary_sensor": {
+      "child_lock": { "name": "Child Lock" },
+      "socket_1_child_lock": { "name": "Socket 1 Child Lock" },
+      "socket_2_child_lock": { "name": "Socket 2 Child Lock" },
+      "socket_3_child_lock": { "name": "Socket 3 Child Lock" },
+      "socket_4_child_lock": { "name": "Socket 4 Child Lock" },
+      "socket_5_child_lock": { "name": "Socket 5 Child Lock" },
+      "socket_6_child_lock": { "name": "Socket 6 Child Lock" }
+    }
+  },
   "services": {
     "set_timer_enable": {
       "name": "Set Timer Enable",

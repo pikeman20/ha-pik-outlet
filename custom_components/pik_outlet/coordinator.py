@@ -10,7 +10,9 @@ Update sources
   ``async_set_updated_data``.
 * **Polling (heartbeat)**   – every ``POLL_INTERVAL_SECONDS`` the coordinator
   verifies the BLE link is alive.  If disconnected it attempts reconnection
-  and re-requests full status.  When already connected the poll is a no-op.
+  and re-requests full status.  When already connected it actively queries
+  STATUS + STATUS:0 + ENERGY to catch physical button presses and timer
+  changes that may have been missed.
 """
 from __future__ import annotations
 
@@ -74,12 +76,20 @@ class PikOutletCoordinator(DataUpdateCoordinator[DeviceState]):
     async def _async_update_data(self) -> DeviceState:
         """Called every ``update_interval`` and on first refresh.
 
-        If the BLE link is down, attempt reconnection.  Otherwise return
-        current cached state (real-time data arrives via notifications).
+        If the BLE link is down, attempt reconnection.
+        When already connected, actively poll STATUS + STATUS:0 + ENERGY to
+        catch state changes caused by physical button presses or timers that
+        might have been missed due to BLE notification gaps.
         """
         try:
             if not self.client.is_connected:
                 await self._reconnect()
+            else:
+                # Active poll – ensures HA state matches the physical device.
+                await self.client.request_full_status()
+                _LOGGER.debug(
+                    "PIK Outlet %s status polled successfully", self.address
+                )
             return self.client.state
         except BleakError as exc:
             raise UpdateFailed(f"BLE communication error: {exc}") from exc

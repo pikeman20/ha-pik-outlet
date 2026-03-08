@@ -22,6 +22,7 @@ from homeassistant.components.switch import (
     SwitchEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -52,6 +53,19 @@ SOCKET_SWITCH_DESCRIPTIONS: tuple[PikSocketSwitchDescription, ...] = tuple(
     for i in range(SOCKET_COUNT)
 )
 
+TIMER_ENABLE_DESCRIPTIONS: tuple[PikSocketSwitchDescription, ...] = tuple(
+    PikSocketSwitchDescription(
+        key=f"socket_{i + 1}_timer_enable",
+        translation_key=f"socket_{i + 1}_timer_enable",
+        name=f"Socket {i + 1} Timer",
+        icon="mdi:timer-outline",
+        device_class=SwitchDeviceClass.SWITCH,
+        entity_category=EntityCategory.CONFIG,
+        socket_id=i,
+    )
+    for i in range(SOCKET_COUNT)
+)
+
 
 # ── Platform setup ───────────────────────────────────────────────────────────
 
@@ -63,9 +77,14 @@ async def async_setup_entry(
     """Set up PIK Outlet switch entities."""
     coordinator: PikOutletCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    async_add_entities(
+    entities: list[SwitchEntity] = [
         PikSocketSwitch(coordinator, desc) for desc in SOCKET_SWITCH_DESCRIPTIONS
+    ]
+    entities.extend(
+        PikTimerEnableSwitch(coordinator, desc)
+        for desc in TIMER_ENABLE_DESCRIPTIONS
     )
+    async_add_entities(entities)
 
 
 # ── Entity implementation ────────────────────────────────────────────────────
@@ -97,11 +116,12 @@ class PikSocketSwitch(PikOutletEntity, SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the socket mode as an extra attribute."""
+        """Expose the socket mode and lock as extra attributes."""
         state = self.coordinator.data
         if state is None:
             return {}
-        return {"mode": state.sockets[self._socket_id].mode}
+        sk = state.sockets[self._socket_id]
+        return {"mode": sk.mode, "child_lock": sk.lock}
 
     # ── Commands ─────────────────────────────────────────────────────────────
 
@@ -124,4 +144,83 @@ class PikSocketSwitch(PikOutletEntity, SwitchEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator."""
+        self.async_write_ha_state()
+
+
+# ── Timer Enable Switch ──────────────────────────────────────────────────────
+
+class PikTimerEnableSwitch(PikOutletEntity, SwitchEntity):
+    """Per-socket timer enable/disable switch.
+
+    Controls individual bits of the 6-char timer-enable flag string sent via
+    ``TIMER_EN:XXXXXX``.  Toggling one socket preserves the other sockets'
+    current timer enable state.
+    """
+
+    entity_description: PikSocketSwitchDescription
+
+    def __init__(
+        self,
+        coordinator: PikOutletCoordinator,
+        description: PikSocketSwitchDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._socket_id = description.socket_id
+        self._attr_unique_id = (
+            f"{self._mac_id}_socket_{self._socket_id + 1}_timer_enable"
+        )
+
+    # ── State ────────────────────────────────────────────────────────────────
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True when the timer for this socket is enabled."""
+        state = self.coordinator.data
+        if state is None or not state.timer_enable:
+            return None
+        flags = state.timer_enable  # e.g. "110101"
+        if len(flags) != SOCKET_COUNT:
+            return None
+        return flags[self._socket_id] == "1"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Show cached timer profiles for this socket."""
+        state = self.coordinator.data
+        if state is None:
+            return {}
+        profiles = state.timer_profiles[self._socket_id]
+        attrs: dict[str, Any] = {}
+        for idx, p in enumerate(profiles, start=1):
+            if p.enabled:
+                attrs[f"profile_{idx}"] = (
+                    f"days=0b{p.days:07b} "
+                    f"on={p.hour_on:02d}:{p.minute_on:02d} "
+                    f"off={p.hour_off:02d}:{p.minute_off:02d}"
+                )
+        return attrs
+
+    # ── Commands ─────────────────────────────────────────────────────────────
+
+    async def _send_flags(self, enable: bool) -> None:
+        """Build a new 6-char flag string and send it to the device."""
+        state = self.coordinator.data
+        current = list(state.timer_enable) if state and state.timer_enable else list("000000")
+        current[self._socket_id] = "1" if enable else "0"
+        await self.coordinator.client.set_timer_enable("".join(current))
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable timer for this socket."""
+        await self._send_flags(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable timer for this socket."""
+        await self._send_flags(False)
+
+    # ── Coordinator update ───────────────────────────────────────────────────
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
         self.async_write_ha_state()

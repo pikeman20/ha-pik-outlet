@@ -2,8 +2,11 @@
 
 Provides control and monitoring of PIK's 6-channel BLE smart outlet:
 * 6 × Switch entities (on/off per socket)
+* 6 × Switch entities (timer enable per socket)
 * 6 × Select entities (mode: Off / Manual / Cloud per socket)
 * 1 × Select entity (master mode for all sockets)
+* 1 × Binary sensor (global child lock)
+* 6 × Binary sensor (per-socket child lock)
 * 4 × Sensor entities (voltage, current, power, frequency)
 * 2 × Diagnostic sensor entities (device clock, timer flags)
 * 2 × Button entities (sync time, refresh status)
@@ -34,10 +37,11 @@ from .pik_ble import PikBLEClient
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
-    Platform.SWITCH,
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.SELECT,
     Platform.SENSOR,
-    Platform.BUTTON,
+    Platform.SWITCH,
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════
