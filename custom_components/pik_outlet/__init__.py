@@ -57,10 +57,13 @@ _CARD_REGISTERED = False  # One-time guard per HA session
 
 _WWW_DIR = os.path.join(os.path.dirname(__file__), "www")
 
-# Cards to register: (url_path, local_filename)
-_CARDS = [
-    (f"/hacsfiles/{DOMAIN}/pik-schedule-card.js", "pik-schedule-card.js"),
-    (f"/hacsfiles/{DOMAIN}/pik-outlet-card.js", "pik-outlet-card.js"),
+# Cards to register: (url_suffix, local_filename)
+# Use /{DOMAIN}/ prefix — NOT /hacsfiles/ which is owned by HACS and would
+# shadow our static paths, causing 404 → custom elements never defined →
+# "Timeout waiting for strategy element …" errors.
+_CARD_FILES = [
+    "pik-schedule-card.js",
+    "pik-outlet-card.js",
 ]
 
 
@@ -74,20 +77,23 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
     from homeassistant.components.http import StaticPathConfig
     from homeassistant.components.frontend import add_extra_js_url
 
-    static_paths = [
-        StaticPathConfig(url, os.path.join(_WWW_DIR, filename), False)
-        for url, filename in _CARDS
-    ]
+    static_paths = []
+    urls = []
+    for filename in _CARD_FILES:
+        url = f"/{DOMAIN}/{filename}"
+        local = os.path.join(_WWW_DIR, filename)
+        if not os.path.isfile(local):
+            _LOGGER.warning("Card JS not found: %s", local)
+            continue
+        static_paths.append(StaticPathConfig(url, local, False))
+        urls.append(url)
 
-    await hass.http.async_register_static_paths(static_paths)
+    if static_paths:
+        await hass.http.async_register_static_paths(static_paths)
+        for url in urls:
+            add_extra_js_url(hass, url)
 
-    for url, _ in _CARDS:
-        add_extra_js_url(hass, url)
-
-    _LOGGER.info(
-        "PIK Lovelace cards registered: %s",
-        ", ".join(fn for _, fn in _CARDS),
-    )
+    _LOGGER.info("PIK Lovelace cards registered: %s", ", ".join(urls))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
