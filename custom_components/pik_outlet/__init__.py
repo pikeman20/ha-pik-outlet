@@ -50,33 +50,25 @@ PLATFORMS: list[Platform] = [
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Lovelace card registration
+# Lovelace card registration — runs in async_setup() (domain-level),
+# which fires BEFORE async_setup_entry(). This guarantees the JS files
+# are served and injected into the frontend before any dashboard renders.
 # ══════════════════════════════════════════════════════════════════════════════
-
-_CARD_REGISTERED = False  # One-time guard per HA session
 
 _WWW_DIR = os.path.join(os.path.dirname(__file__), "www")
 
-# Cards to register: (url_suffix, local_filename)
-# Use /{DOMAIN}/ prefix — NOT /hacsfiles/ which is owned by HACS and would
-# shadow our static paths, causing 404 → custom elements never defined →
-# "Timeout waiting for strategy element …" errors.
 _CARD_FILES = [
     "pik-schedule-card.js",
     "pik-outlet-card.js",
 ]
 
 
-async def _async_register_cards(hass: HomeAssistant) -> None:
-    """Register all PIK custom Lovelace cards (once per HA session)."""
-    global _CARD_REGISTERED  # noqa: PLW0603
-    if _CARD_REGISTERED:
-        return
-    _CARD_REGISTERED = True
-
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the PIK Outlet domain: register Lovelace cards early."""
     from homeassistant.components.http import StaticPathConfig
     from homeassistant.components.frontend import add_extra_js_url
 
+    # 1. Serve JS files via HA's HTTP server
     static_paths = []
     urls = []
     for filename in _CARD_FILES:
@@ -90,10 +82,54 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
 
     if static_paths:
         await hass.http.async_register_static_paths(static_paths)
-        for url in urls:
-            add_extra_js_url(hass, url)
+
+    # 2. Register each JS as a Lovelace resource (shows in Settings → Dashboards → Resources)
+    for url in urls:
+        await _async_ensure_lovelace_resource(hass, url)
+        # Also inject via add_extra_js_url as belt-and-suspenders fallback
+        add_extra_js_url(hass, url)
 
     _LOGGER.info("PIK Lovelace cards registered: %s", ", ".join(urls))
+    return True
+
+
+async def _async_ensure_lovelace_resource(
+    hass: HomeAssistant, url: str
+) -> None:
+    """Add *url* to the Lovelace resource collection if not already present.
+
+    Works only when Lovelace is in **storage** mode (the default).
+    In YAML mode resources are managed manually — we skip silently.
+    """
+    try:
+        ll_data = hass.data.get("lovelace")
+        if ll_data is None:
+            _LOGGER.debug("lovelace data not available, skipping resource for %s", url)
+            return
+
+        resources = ll_data.get("resources")
+        if resources is None:
+            # YAML mode — resources in configuration.yaml, can't modify
+            _LOGGER.debug("Lovelace in YAML mode, skipping resource for %s", url)
+            return
+
+        # Deduplicate: check if URL already registered
+        for item in resources.async_items():
+            if item.get("url") == url:
+                _LOGGER.debug("Lovelace resource already exists: %s", url)
+                return
+
+        # Create new resource entry (type "module" for ES modules / JS)
+        await resources.async_create_item({"res_type": "module", "url": url})
+        _LOGGER.info("Added Lovelace resource: %s", url)
+
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "Could not auto-register Lovelace resource %s — "
+            "add it manually in Settings → Dashboards → Resources",
+            url,
+            exc_info=True,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -103,9 +139,6 @@ async def _async_register_cards(hass: HomeAssistant) -> None:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PIK Outlet from a config entry."""
     from homeassistant.components.bluetooth import async_ble_device_from_address
-
-    # Register custom Lovelace cards (idempotent, first entry wins)
-    await _async_register_cards(hass)
 
     address: str = entry.data[CONF_ADDRESS]
 
