@@ -17,7 +17,9 @@ Provides control and monitoring of PIK's 6-channel BLE smart outlet:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
@@ -46,6 +48,26 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
     Platform.TIME,
 ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Domain-level setup (once per HA session — registers the custom Lovelace card)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Register the PIK Schedule Card as a Lovelace frontend resource."""
+    from homeassistant.components.frontend import add_extra_js_url
+
+    www_dir = os.path.join(os.path.dirname(__file__), "www")
+    card_path = os.path.join(www_dir, "pik-schedule-card.js")
+
+    hass.http.register_static_path(
+        f"/{DOMAIN}/pik-schedule-card.js", card_path, cache_headers=False
+    )
+    add_extra_js_url(hass, f"/{DOMAIN}/pik-schedule-card.js")
+
+    return True
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Setup / Unload

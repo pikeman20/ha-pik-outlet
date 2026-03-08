@@ -186,20 +186,28 @@ class PikTimerEnableSwitch(PikOutletEntity, SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Show cached timer profiles for this socket."""
+        """Expose all 6 timer profiles as structured data.
+
+        The custom Lovelace schedule card reads these attributes to
+        populate the circular clock UI for all profile slots.
+        """
         state = self.coordinator.data
         if state is None:
             return {}
         profiles = state.timer_profiles[self._socket_id]
-        attrs: dict[str, Any] = {}
-        for idx, p in enumerate(profiles, start=1):
-            if p.enabled:
-                attrs[f"profile_{idx}"] = (
-                    f"days=0b{p.days:07b} "
-                    f"on={p.hour_on:02d}:{p.minute_on:02d} "
-                    f"off={p.hour_off:02d}:{p.minute_off:02d}"
-                )
-        return attrs
+        return {
+            "profiles": [
+                {
+                    "days": p.days,
+                    "hour_on": p.hour_on,
+                    "minute_on": p.minute_on,
+                    "hour_off": p.hour_off,
+                    "minute_off": p.minute_off,
+                    "enabled": p.enabled,
+                }
+                for p in profiles
+            ]
+        }
 
     # ── Commands ─────────────────────────────────────────────────────────────
 
