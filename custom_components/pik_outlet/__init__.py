@@ -55,26 +55,39 @@ PLATFORMS: list[Platform] = [
 
 _CARD_REGISTERED = False  # One-time guard per HA session
 
-CARD_URL = f"/hacsfiles/{DOMAIN}/pik-schedule-card.js"
-CARD_LOCAL_PATH = os.path.join(os.path.dirname(__file__), "www", "pik-schedule-card.js")
+_WWW_DIR = os.path.join(os.path.dirname(__file__), "www")
+
+# Cards to register: (url_path, local_filename)
+_CARDS = [
+    (f"/hacsfiles/{DOMAIN}/pik-schedule-card.js", "pik-schedule-card.js"),
+    (f"/hacsfiles/{DOMAIN}/pik-outlet-card.js", "pik-outlet-card.js"),
+]
 
 
-def _register_card(hass: HomeAssistant) -> None:
-    """Register the PIK Schedule Card JS as a Lovelace resource (once)."""
+async def _async_register_cards(hass: HomeAssistant) -> None:
+    """Register all PIK custom Lovelace cards (once per HA session)."""
     global _CARD_REGISTERED  # noqa: PLW0603
     if _CARD_REGISTERED:
         return
     _CARD_REGISTERED = True
 
-    # Serve the JS file under a static URL
-    hass.http.register_static_path(CARD_URL, CARD_LOCAL_PATH, cache_headers=False)
-
-    # Inject into Lovelace frontend so the card is available without manual
-    # resource configuration.
+    from homeassistant.components.http import StaticPathConfig
     from homeassistant.components.frontend import add_extra_js_url
 
-    add_extra_js_url(hass, CARD_URL)
-    _LOGGER.info("PIK Schedule Card registered at %s", CARD_URL)
+    static_paths = [
+        StaticPathConfig(url, os.path.join(_WWW_DIR, filename), False)
+        for url, filename in _CARDS
+    ]
+
+    await hass.http.async_register_static_paths(static_paths)
+
+    for url, _ in _CARDS:
+        add_extra_js_url(hass, url)
+
+    _LOGGER.info(
+        "PIK Lovelace cards registered: %s",
+        ", ".join(fn for _, fn in _CARDS),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -85,8 +98,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PIK Outlet from a config entry."""
     from homeassistant.components.bluetooth import async_ble_device_from_address
 
-    # Register the custom Lovelace card (idempotent, first entry wins)
-    _register_card(hass)
+    # Register custom Lovelace cards (idempotent, first entry wins)
+    await _async_register_cards(hass)
 
     address: str = entry.data[CONF_ADDRESS]
 

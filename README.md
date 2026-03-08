@@ -67,18 +67,32 @@ Use the **select entity** to set Cloud mode for timer-driven operation.
 
 ## Schedule Card (Custom Lovelace Card)
 
-The integration ships with **PIK Schedule Card** — a visual circular-clock card
-for configuring timer schedules directly from the HA dashboard.
+The integration ships with two custom Lovelace cards, auto-registered when the
+integration loads.
 
-### Adding the Card
+### PIK Outlet Card (More-Info Style)
 
-The card is auto-registered when the integration loads. In your dashboard:
+A dashboard overview card inspired by
+[lovelace-more-info-card](https://github.com/thomasloven/lovelace-more-info-card).
+Shows switch control, 24h schedule timeline, profile summary, and energy sensors
+in a single view.
 
-1. Click **Edit Dashboard** → **Add Card** → search for **PIK Schedule Card**
-2. Pick any timer-enable switch entity (e.g. `switch.pik_outlet_socket_1_timer_enable`)
-3. Save
+```yaml
+type: custom:pik-outlet-card
+entity: switch.pik_outlet_socket_1
+```
 
-Or in YAML:
+**Features:**
+- **Socket tabs** (1–6): view any socket at a glance
+- **Switch toggle**: on/off control using HA's native `ha-entity-toggle`
+- **24h schedule timeline**: horizontal bar per profile with current-time indicator
+- **Profile summary**: ON→OFF times and active days for each profile
+- **Timer toggle**: enable/disable the socket timer
+- **Energy sensors**: voltage, current, power, frequency — click to open more-info
+
+### PIK Schedule Card (Editor)
+
+A circular-clock editor for configuring timer profiles.
 
 ```yaml
 type: custom:pik-schedule-card
