@@ -1,0 +1,107 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add PIK Outlet",
+        "description": "Enter the Bluetooth address of your PIK 6-Switch Outlet, or select a discovered device.",
+        "data": {
+          "address": "Bluetooth Address"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Confirm PIK Outlet",
+        "description": "Do you want to set up **{name}**?"
+      }
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_devices_found": "No PIK Outlet devices found nearby.",
+      "cannot_connect": "Could not connect to the device. Make sure it is powered on and in range."
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the device."
+    }
+  },
+  "services": {
+    "set_timer_enable": {
+      "name": "Set Timer Enable",
+      "description": "Enable or disable timer schedules for each socket.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The PIK Outlet device."
+        },
+        "flags": {
+          "name": "Timer Flags",
+          "description": "6-character string of '0' and '1' for sockets 1-6. Example: '110101' enables timers on sockets 1, 2, 4, 6."
+        }
+      }
+    },
+    "set_timer_profile": {
+      "name": "Set Timer Profile",
+      "description": "Configure a timer schedule profile for a socket.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The PIK Outlet device."
+        },
+        "socket": {
+          "name": "Socket",
+          "description": "Socket number (1-6)."
+        },
+        "profile": {
+          "name": "Profile Slot",
+          "description": "Profile slot number (1-6). Each socket supports up to 6 independent schedules."
+        },
+        "days": {
+          "name": "Days Bitmask",
+          "description": "Weekday bitmask (0-127). bit0=Sun, bit1=Mon, bit2=Tue, bit3=Wed, bit4=Thu, bit5=Fri, bit6=Sat. Example: 62 = Mon-Sat."
+        },
+        "hour_on": {
+          "name": "Turn-ON Hour",
+          "description": "Hour to turn relay ON (0-23)."
+        },
+        "minute_on": {
+          "name": "Turn-ON Minute",
+          "description": "Minute to turn relay ON (0-59)."
+        },
+        "hour_off": {
+          "name": "Turn-OFF Hour",
+          "description": "Hour to turn relay OFF (0-23)."
+        },
+        "minute_off": {
+          "name": "Turn-OFF Minute",
+          "description": "Minute to turn relay OFF (0-59)."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether this profile is active."
+        }
+      }
+    },
+    "send_raw_command": {
+      "name": "Send Raw Command",
+      "description": "Send a raw PIK-CMD command to the device (for debugging and advanced use).",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The PIK Outlet device."
+        },
+        "command": {
+          "name": "Command",
+          "description": "Command string without 'PIK-CMD:' prefix. Example: 'STATUS' or 'CUSTOM:AT+VER'."
+        }
+      }
+    },
+    "sync_time": {
+      "name": "Sync Time",
+      "description": "Synchronize the device RTC clock to Home Assistant's current time.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The PIK Outlet device."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,152 @@
+set_timer_enable:
+  name: Set Timer Enable
+  description: >-
+    Enable or disable timer schedules for each of the 6 sockets.
+    Pass a 6-character string of '0' and '1' (e.g. '110101').
+  fields:
+    device_id:
+      name: Device
+      description: The PIK Outlet device to configure.
+      required: true
+      selector:
+        device:
+          integration: pik_outlet
+    flags:
+      name: Timer Flags
+      description: >-
+        6-character string where each character is '0' (disabled) or '1' (enabled)
+        for sockets 1 through 6. Example: '110101' enables S1, S2, S4, S6.
+      required: true
+      example: "110101"
+      selector:
+        text:
+
+set_timer_profile:
+  name: Set Timer Profile
+  description: >-
+    Configure a timer profile for one socket.
+    Each socket supports up to 6 independent schedule profiles.
+  fields:
+    device_id:
+      name: Device
+      description: The PIK Outlet device to configure.
+      required: true
+      selector:
+        device:
+          integration: pik_outlet
+    socket:
+      name: Socket
+      description: Socket number (1-6).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 6
+          step: 1
+          mode: box
+    profile:
+      name: Profile Slot
+      description: Profile slot number (1-6).
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 6
+          step: 1
+          mode: box
+    days:
+      name: Days Bitmask
+      description: >-
+        Weekday bitmask (0-127). bit0=Sun, bit1=Mon, bit2=Tue, bit3=Wed,
+        bit4=Thu, bit5=Fri, bit6=Sat. Examples: 62=Mon-Sat, 127=Every day,
+        65=Sun+Sat (weekends).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 127
+          step: 1
+          mode: box
+    hour_on:
+      name: Turn-ON Hour
+      description: Hour to turn relay ON (0-23).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+    minute_on:
+      name: Turn-ON Minute
+      description: Minute to turn relay ON (0-59).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 59
+          step: 1
+          mode: box
+    hour_off:
+      name: Turn-OFF Hour
+      description: Hour to turn relay OFF (0-23).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+    minute_off:
+      name: Turn-OFF Minute
+      description: Minute to turn relay OFF (0-59).
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 59
+          step: 1
+          mode: box
+    enabled:
+      name: Enabled
+      description: Whether this timer profile is active.
+      required: true
+      default: true
+      selector:
+        boolean:
+
+send_raw_command:
+  name: Send Raw Command
+  description: >-
+    Send a raw PIK-CMD command to the device.
+    For debugging and advanced use only.
+  fields:
+    device_id:
+      name: Device
+      description: The PIK Outlet device.
+      required: true
+      selector:
+        device:
+          integration: pik_outlet
+    command:
+      name: Command
+      description: >-
+        Command string without the 'PIK-CMD:' prefix.
+        Examples: 'STATUS', 'ENERGY', 'CUSTOM:AT+VER'.
+      required: true
+      example: "STATUS"
+      selector:
+        text:
+
+sync_time:
+  name: Sync Time
+  description: >-
+    Synchronize the device's RTC clock to Home Assistant's current local time.
+  fields:
+    device_id:
+      name: Device
+      description: The PIK Outlet device.
+      required: true
+      selector:
+        device:
+          integration: pik_outlet
