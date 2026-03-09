@@ -1,12 +1,9 @@
 /**
- * PIK Outlet — More-Info Dialog Override v2.1.0
+ * PIK Outlet — More-Info Dialog Override v2.0.0
  *
  * Intercepts HA's more-info dialog for PIK outlet entities and injects
- * a rich custom UI with circular 24h clock, draggable ON/OFF handles,
- * time inputs, day-of-week selector, profile tabs, socket mode,
- * apply button, and energy sensors.
- *
- * Cloned interactive schedule UI from pik-schedule-card for consistency.
+ * a rich custom UI with circular 24h clock, profile tabs, socket mode,
+ * timer toggle, and energy sensors.
  *
  * Only affects PIK outlet socket switch entities — all other
  * entities keep their default more-info dialog.
@@ -16,13 +13,12 @@
 (function () {
 'use strict';
 
-const VERSION      = '2.1.0';
+const VERSION      = '2.0.0';
 const DOMAIN       = 'pik_outlet';
 const POLL_MS      = 60;
 const POLL_TIMEOUT = 3000;
 const SOCKETS      = 6;
 const PROFILES     = 6;
-const SNAP         = 5;
 const SVG_NS       = 'http://www.w3.org/2000/svg';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -31,24 +27,12 @@ const SVG_NS       = 'http://www.w3.org/2000/svg';
 const CX = 150, CY = 150, R = 120;
 const LBL_R = 86, TICK_IN = 99;
 
-// Day config: display Mon→Sun, firmware uses bit0=Sun … bit6=Sat
-const DAYS = [
-  {l:'Mon',b:1},{l:'Tue',b:2},{l:'Wed',b:3},
-  {l:'Thu',b:4},{l:'Fri',b:5},{l:'Sat',b:6},{l:'Sun',b:0},
-];
-
 function polar(deg, r) {
   r = r || R;
   const rad = (deg - 90) * Math.PI / 180;
   return [CX + r * Math.cos(rad), CY + r * Math.sin(rad)];
 }
 function min2deg(m) { return (m / 1440) * 360; }
-function deg2min(a) {
-  a = ((a % 360) + 360) % 360;
-  let m = Math.round(a / 360 * 1440);
-  m = Math.round(m / SNAP) * SNAP;
-  return m >= 1440 ? 0 : m;
-}
 function arcD(startDeg, endDeg) {
   const span = endDeg - startDeg;
   if (span <= 0.1) return '';
@@ -67,6 +51,16 @@ function arcD(startDeg, endDeg) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function pad(n) { return String(n).padStart(2, '0'); }
 const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function daysStr(bm) {
+  if (!bm) return '—';
+  if (bm === 127) return 'Every day';
+  if (bm === 62)  return 'Mon – Fri';
+  if (bm === 126) return 'Mon – Sat';
+  if (bm === 65)  return 'Weekends';
+  const r = [];
+  for (let i = 0; i < 7; i++) if (bm & (1 << i)) r.push(DAY_NAMES[i]);
+  return r.join(', ');
+}
 function getHA() { return document.querySelector('home-assistant'); }
 function getHass() { return getHA()?.hass; }
 
@@ -102,7 +96,7 @@ function getSocketNum(entityId) {
 
 /**
  * Build a map of sibling entity IDs from the same device.
- * Returns { sockets, timers, sensors, modes, deviceId, prefix }
+ * Returns { sockets, timers, sensors, modes }
  */
 function buildDeviceMap(entityId) {
   const hass = getHass();
@@ -110,27 +104,26 @@ function buildDeviceMap(entityId) {
   const entry = hass.entities[entityId];
   if (!entry?.device_id) return null;
 
-  const map = { sockets: {}, timers: {}, sensors: {}, modes: {},
-                deviceId: entry.device_id, prefix: '' };
+  const map = { sockets: {}, timers: {}, sensors: {}, modes: {} };
   const SENSOR_KEYS = ['voltage', 'current', 'power', 'frequency'];
-
-  // Derive prefix from entity_id
-  const pm = entityId.match(/^switch\.(.+?)_socket_\d+/);
-  map.prefix = pm ? pm[1] : 'pik_outlet';
 
   for (const [eid, ent] of Object.entries(hass.entities)) {
     if (ent.device_id !== entry.device_id || ent.platform !== DOMAIN) continue;
     const tk = ent.translation_key || '';
 
+    // Socket switch: translation_key = "socket_N"
     if (eid.startsWith('switch.') && /^socket_\d+$/.test(tk)) {
       map.sockets[parseInt(tk.replace('socket_', ''))] = eid;
     }
+    // Timer enable: translation_key = "socket_N_timer_enable"
     else if (eid.startsWith('switch.') && /^socket_\d+_timer_enable$/.test(tk)) {
       map.timers[parseInt(tk.match(/socket_(\d+)/)[1])] = eid;
     }
+    // Mode select: translation_key = "socket_N_mode"
     else if (eid.startsWith('select.') && /^socket_\d+_mode$/.test(tk)) {
       map.modes[parseInt(tk.match(/socket_(\d+)/)[1])] = eid;
     }
+    // Sensors
     else if (eid.startsWith('sensor.')) {
       for (const sk of SENSOR_KEYS) {
         if (tk === sk || eid.endsWith('_' + sk)) { map.sensors[sk] = eid; break; }
@@ -149,6 +142,7 @@ function buildDeviceMap(entityId) {
       if (tm && !map.timers[parseInt(tm[1])]) map.timers[parseInt(tm[1])] = eid;
     }
   }
+  // Fallback for modes
   if (Object.keys(map.modes).length === 0) {
     for (const [eid, ent] of Object.entries(hass.entities)) {
       if (ent.device_id !== entry.device_id || ent.platform !== DOMAIN) continue;
@@ -163,17 +157,17 @@ function buildDeviceMap(entityId) {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CSS — Merged more-info + schedule-card interactive styles
+   CSS — Redesigned with circular clock
    ═══════════════════════════════════════════════════════════════════════════ */
 const MI_CSS = `
 :host {
   display: block;
   --pik-green: #4CAF50;
-  --pik-green-dim: rgba(76,175,80,0.35);
+  --pik-green-dim: rgba(76,175,80,0.30);
   --pik-red: #EF5350;
-  --pik-red-dim: rgba(239,83,80,0.35);
+  --pik-red-dim: rgba(239,83,80,0.25);
   --pik-blue: var(--primary-color, #42A5F5);
-  --pik-blue-dim: rgba(66,165,245,0.25);
+  --pik-blue-dim: rgba(66,165,245,0.20);
   --pik-surface: var(--secondary-background-color, var(--primary-background-color, #252830));
   --pik-txt1: var(--primary-text-color, #e1e3e6);
   --pik-txt2: var(--secondary-text-color, #8b8f96);
@@ -181,12 +175,11 @@ const MI_CSS = `
   --pik-border: var(--divider-color, #2a2e38);
   --pik-track: var(--divider-color, #2a2e38);
 }
-.mi-wrap { display: flex; flex-direction: column; gap: 10px; }
 
 /* ── Main toggle row ── */
 .mi-toggle-row {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 0 8px;
+  padding: 4px 0 12px;
 }
 .mi-state {
   font-size: 26px; font-weight: 700; color: var(--pik-txt1);
@@ -195,7 +188,7 @@ const MI_CSS = `
 .mi-state.on { color: var(--pik-green); }
 
 /* ── Socket chips ── */
-.mi-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.mi-chips { display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 10px; }
 .mi-chip {
   display: flex; align-items: center; gap: 4px;
   padding: 4px 10px; border-radius: 16px;
@@ -214,6 +207,7 @@ const MI_CSS = `
 /* ── Mode row ── */
 .mi-mode-row {
   display: flex; align-items: center; gap: 8px;
+  padding: 4px 0 8px;
 }
 .mi-mode-lbl {
   font-size: 11px; font-weight: 600; color: var(--pik-txt2);
@@ -230,174 +224,124 @@ const MI_CSS = `
 .mi-mode-btn.sel-off { background: var(--pik-red-dim); color: var(--pik-red); border-color: var(--pik-red); }
 
 /* ── Divider ── */
-.mi-div { height: 1px; background: var(--pik-border); margin: 2px 0; }
+.mi-div { height: 1px; background: var(--pik-border); margin: 4px 0; }
 
-/* ── Tab rows (profile) ── */
-.tab-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.tab-label {
-  font-size: 11px; font-weight: 600; color: var(--pik-txt2);
-  text-transform: uppercase; letter-spacing: .6px; margin-right: 6px;
-  flex-shrink: 0;
+/* ── Timer enable row (above clock) ── */
+.mi-timer-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0 2px;
 }
-.tab-btn {
-  min-width: 32px; height: 28px; border-radius: 8px;
+.mi-timer-left {
+  display: flex; align-items: center; gap: 6px;
+}
+.mi-sec-title {
+  font-size: 12px; font-weight: 700; color: var(--pik-txt1);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.mi-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 8px;
+  text-transform: none; letter-spacing: 0;
+}
+.mi-badge.on  { background: var(--pik-green-dim); color: var(--pik-green); }
+.mi-badge.off { background: rgba(255,255,255,.06); color: var(--pik-txt3); }
+.mi-tog {
+  width: 40px; height: 22px; border-radius: 11px; border: none;
+  background: var(--pik-border); cursor: pointer; position: relative;
+  transition: background .2s; flex-shrink: 0;
+}
+.mi-tog.on { background: var(--pik-green); }
+.mi-tog::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.mi-tog.on::after { transform: translateX(18px); }
+
+/* ── Profile tabs ── */
+.mi-prof-row { display: flex; align-items: center; gap: 3px; padding: 4px 0; }
+.mi-prof-lbl {
+  font-size: 10px; font-weight: 600; color: var(--pik-txt3);
+  text-transform: uppercase; letter-spacing: .5px; margin-right: 4px;
+}
+.mi-prof-btn {
+  min-width: 30px; height: 26px; border-radius: 7px;
   border: 1px solid var(--pik-border); background: transparent;
-  color: var(--pik-txt2); font-size: 12px; font-weight: 500;
+  color: var(--pik-txt2); font-size: 11px; font-weight: 600;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  padding: 0 6px; transition: all .2s; position: relative;
+  padding: 0 5px; transition: all .2s; position: relative;
 }
-.tab-btn:hover { background: var(--pik-surface); }
-.tab-btn.sel { background: var(--pik-blue); color: #fff; border-color: var(--pik-blue); }
-.tab-btn .dot {
+.mi-prof-btn:hover { background: var(--pik-surface); }
+.mi-prof-btn.sel { background: var(--pik-blue); color: #fff; border-color: var(--pik-blue); }
+.mi-prof-dot {
   position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
   width: 4px; height: 4px; border-radius: 50%;
 }
-.tab-btn .dot.on  { background: var(--pik-green); }
-.tab-btn .dot.off { background: var(--pik-txt3); }
-.tab-btn.sel .dot.on  { background: #fff; }
-.tab-btn.sel .dot.off { background: rgba(255,255,255,.5); }
+.mi-prof-dot.on  { background: var(--pik-green); }
+.mi-prof-dot.off { background: var(--pik-txt3); }
+.mi-prof-btn.sel .mi-prof-dot.on { background: #b9f6ca; }
 
-/* ── Profile row with toggle ── */
-.prof-row { display: flex; align-items: center; justify-content: space-between; }
-.toggle {
-  width: 44px; height: 24px; border-radius: 12px; border: none;
-  background: var(--pik-track); cursor: pointer; position: relative;
-  transition: background .25s; flex-shrink: 0;
+/* ── Circular clock ── */
+.mi-clock-wrap {
+  display: flex; justify-content: center; padding: 4px 0;
 }
-.toggle.on { background: var(--pik-blue); }
-.toggle::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 20px; height: 20px; border-radius: 50%; background: #fff;
-  transition: transform .25s;
+.mi-clock-wrap svg {
+  width: 100%; max-width: 260px; height: auto;
 }
-.toggle.on::after { transform: translateX(20px); }
-
-/* ── Warning banner ── */
-.warn {
-  display: none; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: 10px;
-  background: rgba(255,152,0,.1); color: #FFA726;
-  font-size: 12px; font-weight: 500;
+.mi-inner-disc { fill: var(--pik-surface); }
+.mi-inner-dim  { fill: transparent; }
+.mi-track-ring {
+  fill: none; stroke: var(--pik-track); stroke-width: 26; opacity: .45;
 }
-.warn.show { display: flex; }
-.warn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
-.warn span { flex: 1; }
-.warn-btn {
-  padding: 3px 10px; border-radius: 6px; border: 1px solid currentColor;
-  background: transparent; color: inherit; font-size: 11px; font-weight: 600;
-  cursor: pointer; white-space: nowrap;
+.mi-arc {
+  fill: none; stroke-width: 26; stroke-linecap: butt;
+  transition: d .25s ease, opacity .25s;
 }
-.warn-btn:hover { background: rgba(255,152,0,.15); }
-
-/* ── Clock SVG ── */
-.clock-wrap { display: flex; justify-content: center; }
-.clock {
-  width: 100%; max-width: 280px; aspect-ratio: 1;
-  touch-action: none; user-select: none; -webkit-user-select: none;
+.mi-arc.green  { stroke: var(--pik-green); opacity: .65; }
+.mi-arc.red    { stroke: var(--pik-red); opacity: .3; }
+.mi-arc.dim    { stroke: var(--pik-txt3); opacity: .2; }
+.mi-arc.empty  { stroke: none; }
+.mi-tick { stroke: var(--pik-txt3); opacity: .45; }
+.mi-h-lbl {
+  fill: var(--pik-txt3); font-size: 11px; font-weight: 500;
+  text-anchor: middle; dominant-baseline: central;
 }
-.inner-disc { fill: var(--ha-card-background, var(--card-background-color, #1c1f27)); }
-.inner-dim  { fill: rgba(0,0,0,.06); }
-.track-ring { fill: none; stroke: var(--pik-track); stroke-width: 26; }
-.arc { fill: none; stroke-width: 26; stroke-linecap: butt; transition: opacity .15s; }
-.arc.green { stroke: var(--pik-green); opacity: .40; }
-.arc.blue  { stroke: var(--pik-blue);  opacity: .25; }
-.arc.red   { stroke: var(--pik-red);   opacity: .40; }
-.arc.glow.green { opacity: .58; }
-.arc.glow.blue  { opacity: .38; }
-.arc.glow.red   { opacity: .58; }
-.tick { stroke: var(--pik-txt3); }
-.h-lbl {
-  fill: var(--pik-txt2); font-size: 11px; font-weight: 500;
-  text-anchor: middle; dominant-baseline: central; pointer-events: none;
-}
-.h-lbl.major { fill: var(--pik-txt1); font-size: 13px; font-weight: 600; }
-.hit { fill: transparent; cursor: grab; pointer-events: all; }
-.handle {
-  stroke: #fff; stroke-width: 2.5; cursor: grab; transition: r .15s;
-}
-.handle:active { cursor: grabbing; }
-.handle.on  {
-  fill: var(--pik-green);
-  filter: drop-shadow(0 0 4px rgba(76,175,80,.6));
-}
-.handle.off {
-  fill: var(--pik-red);
-  filter: drop-shadow(0 0 4px rgba(239,83,80,.6));
-}
-.handle.big { r: 15; }
-.dur-txt {
+.mi-h-lbl.major { font-size: 13px; font-weight: 700; fill: var(--pik-txt2); }
+.mi-now-hand { stroke: var(--pik-blue); stroke-width: 2; opacity: .8; }
+.mi-now-dot { fill: var(--pik-blue); }
+.mi-dur-txt {
   fill: var(--pik-txt1); font-size: 22px; font-weight: 700;
-  text-anchor: middle; pointer-events: none;
+  text-anchor: middle; dominant-baseline: central;
 }
-.dur-sub {
-  fill: var(--pik-txt2); font-size: 11px; text-anchor: middle;
-  pointer-events: none;
+.mi-dur-sub {
+  fill: var(--pik-txt2); font-size: 11px; font-weight: 500;
+  text-anchor: middle; dominant-baseline: central;
 }
+.mi-empty-txt {
+  fill: var(--pik-txt3); font-size: 14px; font-style: italic;
+  text-anchor: middle; dominant-baseline: central;
+}
+.mi-on-dot { fill: var(--pik-green); }
+.mi-off-dot { fill: var(--pik-red); }
 
-/* ── Time inputs ── */
-.time-row { display: flex; justify-content: center; gap: 14px; }
-.t-grp {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 10px; border-radius: 10px;
-  background: var(--pik-surface); border: 1.5px solid transparent;
+/* ── Schedule info below clock ── */
+.mi-sched-info {
+  text-align: center; padding: 0 0 6px;
 }
-.t-grp.on-grp  { border-color: var(--pik-green-dim); }
-.t-grp.off-grp { border-color: var(--pik-red-dim); }
-.t-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.t-dot.green { background: var(--pik-green); }
-.t-dot.red   { background: var(--pik-red); }
-.t-in {
-  width: 34px; height: 34px;
-  border: 1px solid var(--pik-border); border-radius: 7px;
-  background: var(--ha-card-background, var(--card-background-color, #1a1d24));
-  color: var(--pik-txt1);
-  font-size: 16px; font-weight: 600; text-align: center; outline: none;
+.mi-sched-time {
+  font-size: 16px; font-weight: 700; color: var(--pik-txt1);
   font-family: 'SF Mono','Menlo','Cascadia Code','Consolas',monospace;
-  -moz-appearance: textfield;
+  letter-spacing: .5px;
 }
-.t-in::-webkit-outer-spin-button,
-.t-in::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.t-in:focus {
-  border-color: var(--pik-blue);
-  box-shadow: 0 0 0 2px var(--pik-blue-dim);
+.mi-sched-arrow { color: var(--pik-txt3); margin: 0 6px; font-size: 14px; }
+.mi-sched-days {
+  font-size: 11px; color: var(--pik-txt2); margin-top: 2px;
 }
-.sep { font-size: 18px; font-weight: 700; color: var(--pik-txt3); margin: 0 1px; }
-
-/* ── Day selector ── */
-.days { display: flex; justify-content: center; gap: 5px; }
-.d-btn {
-  width: 38px; height: 36px; border-radius: 9px;
-  border: 1px solid var(--pik-border); background: transparent;
-  color: var(--pik-txt2); font-size: 10px; font-weight: 600;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  text-transform: uppercase; letter-spacing: .4px; transition: all .2s;
-}
-.d-btn:hover { background: var(--pik-surface); }
-.d-btn.sel {
-  background: var(--pik-blue); color: #fff; border-color: var(--pik-blue);
-  box-shadow: 0 2px 6px var(--pik-blue-dim);
-}
-
-/* ── Apply button ── */
-.apply {
-  width: 100%; height: 42px; border-radius: 10px; border: none;
-  background: var(--pik-blue); color: #fff;
-  font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: all .2s; letter-spacing: .3px;
-}
-.apply:hover { filter: brightness(1.1); box-shadow: 0 4px 12px var(--pik-blue-dim); }
-.apply:active { transform: scale(.98); }
-.apply:disabled { opacity: .6; cursor: not-allowed; filter: none; }
-.apply.ok  { background: var(--pik-green); }
-.apply.err { background: var(--pik-red); }
-
-.note {
-  text-align: center; font-size: 10px; color: var(--pik-txt3);
-  line-height: 1.5; margin-top: -4px;
+.mi-sched-empty {
+  font-size: 12px; color: var(--pik-txt3); font-style: italic; padding: 4px 0;
 }
 
 /* ── Energy row ── */
-.mi-energy { display: flex; gap: 5px; flex-wrap: wrap; }
+.mi-energy { display: flex; gap: 5px; flex-wrap: wrap; padding: 4px 0 0; }
 .mi-en {
   flex: 1; min-width: 58px; text-align: center;
   padding: 6px 4px; border-radius: 8px; background: var(--pik-surface);
@@ -408,17 +352,27 @@ const MI_CSS = `
 .mi-en-unit { font-size: 10px; color: var(--pik-txt3); margin-left: 1px; }
 .mi-en-lbl { font-size: 9px; color: var(--pik-txt2); margin-top: 2px; }
 
-/* ── Section header ── */
+/* ── Edit button ── */
+.mi-edit {
+  display: block; width: 100%; margin: 10px 0 4px; padding: 8px;
+  border-radius: 8px; border: 1.5px solid var(--pik-blue);
+  background: transparent; color: var(--pik-blue);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all .15s; text-align: center;
+}
+.mi-edit:hover { background: rgba(66,165,245,.1); }
+
+/* ── Section header (small) ── */
 .mi-sec {
   font-size: 11px; font-weight: 600; color: var(--pik-txt2);
   text-transform: uppercase; letter-spacing: .5px;
-  padding: 2px 0;
+  padding: 6px 0 2px;
 }
 `;
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   <pik-outlet-more-info> Custom Element — Interactive Schedule UI
+   <pik-outlet-more-info> Custom Element — Redesigned
    ═══════════════════════════════════════════════════════════════════════════ */
 class PikOutletMoreInfo extends HTMLElement {
 
@@ -431,19 +385,6 @@ class PikOutletMoreInfo extends HTMLElement {
     this._profile  = 1;
     this._devMap   = null;
     this._built    = false;
-
-    // Schedule state (from pik-schedule-card)
-    this._onMin    = 7 * 60;
-    this._offMin   = 22 * 60;
-    this._days     = 0b0111110;
-    this._enabled  = true;
-    this._dirty    = false;
-    this._drag     = null;
-    this._applying = false;
-
-    // Bound handlers for window-level drag listeners
-    this._bMove = null;
-    this._bUp   = null;
   }
 
   set entityId(v) {
@@ -451,30 +392,20 @@ class PikOutletMoreInfo extends HTMLElement {
     this._entityId = v;
     this._socket = getSocketNum(v);
     this._profile = 1;
-    this._dirty = false;
     this._devMap = buildDeviceMap(v);
-    this._loadState();
     this._refresh();
   }
   get entityId() { return this._entityId; }
 
   set hass(v) {
-    const prev = this._hass;
     this._hass = v;
-    // Reload state from entities when user hasn't made local edits
-    if (!this._dirty && !this._applying && prev) {
-      const teId = this._teId();
-      if (teId && (!prev.states[teId] || prev.states[teId] !== v.states[teId])) {
-        this._loadState();
-      }
-    }
     this._refresh();
   }
 
   _refresh() {
     if (!this._hass || !this._entityId) return;
     if (!this._built) { this._build(); this._built = true; }
-    this._updateUI();
+    this._update();
   }
 
   _$(id) { return this.shadowRoot.getElementById(id); }
@@ -489,7 +420,7 @@ class PikOutletMoreInfo extends HTMLElement {
      ══════════════════════════════════════════════════════════════════════ */
   _build() {
     this.shadowRoot.innerHTML = `<style>${MI_CSS}</style>
-<div class="mi-wrap">
+<div>
   <!-- Switch state + toggle -->
   <div class="mi-toggle-row">
     <span class="mi-state" id="miState">Off</span>
@@ -507,72 +438,54 @@ class PikOutletMoreInfo extends HTMLElement {
 
   <div class="mi-div"></div>
 
-  <!-- Profile row with enable toggle (like schedule card) -->
-  <div class="prof-row">
-    <div class="tab-row" id="prTabs"></div>
-    <button class="toggle" id="toggle"></button>
+  <!-- Timer enable toggle (above clock) -->
+  <div class="mi-timer-row">
+    <div class="mi-timer-left">
+      <span class="mi-sec-title">Schedule</span>
+      <span class="mi-badge" id="miBadge">Off</span>
+    </div>
+    <button class="mi-tog" id="miTmrTog"></button>
   </div>
 
-  <!-- Warning banner: socket timer disabled -->
-  <div class="warn" id="warn">
-    <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
-    <span>Socket timer is disabled</span>
-    <button class="warn-btn" id="warnBtn">Enable</button>
-  </div>
+  <!-- Profile tabs -->
+  <div class="mi-prof-row" id="miProfRow"></div>
 
-  <!-- Circular clock with draggable handles -->
-  <div class="clock-wrap">
-    <svg class="clock" id="clock" viewBox="0 0 300 300">
-      <circle class="inner-disc" cx="${CX}" cy="${CY}" r="94"/>
-      <circle class="inner-dim"  cx="${CX}" cy="${CY}" r="94"/>
-      <circle class="track-ring" cx="${CX}" cy="${CY}" r="${R}"/>
-      <path id="arcR" class="arc red"/>
-      <path id="arcG" class="arc green"/>
-      <g id="markers"></g>
-      <circle id="hitOff" class="hit" r="24"/>
-      <circle id="hOff"   class="handle off" r="12"/>
-      <circle id="hitOn"  class="hit" r="24"/>
-      <circle id="hOn"    class="handle on"  r="12"/>
-      <text id="durTxt" class="dur-txt" x="${CX}" y="145"></text>
-      <text class="dur-sub" x="${CX}" y="165">ON duration</text>
+  <!-- Circular clock -->
+  <div class="mi-clock-wrap">
+    <svg id="miClock" viewBox="0 0 300 300">
+      <circle class="mi-inner-disc" cx="${CX}" cy="${CY}" r="${R - 14}"/>
+      <circle class="mi-inner-dim"  cx="${CX}" cy="${CY}" r="${R + 14}"/>
+      <circle class="mi-track-ring" cx="${CX}" cy="${CY}" r="${R}"/>
+      <path   class="mi-arc red"    id="miArcR" d=""/>
+      <path   class="mi-arc green"  id="miArcG" d=""/>
+      <g id="miMarkers"></g>
+      <!-- Now indicator -->
+      <line id="miNowHand" class="mi-now-hand" x1="${CX}" y1="${CY}" x2="${CX}" y2="${CY - R + 13}"/>
+      <circle id="miNowDot" class="mi-now-dot" cx="${CX}" cy="${CY}" r="3"/>
+      <!-- ON/OFF dots -->
+      <circle id="miOnDot"  class="mi-on-dot"  r="6" cx="0" cy="0" style="display:none"/>
+      <circle id="miOffDot" class="mi-off-dot" r="6" cx="0" cy="0" style="display:none"/>
+      <!-- Centre text -->
+      <text class="mi-dur-txt" id="miDurTxt" x="${CX}" y="${CY - 6}"></text>
+      <text class="mi-dur-sub" id="miDurSub" x="${CX}" y="${CY + 14}"></text>
+      <text class="mi-empty-txt" id="miEmptyTxt" x="${CX}" y="${CY}" style="display:none">Not configured</text>
     </svg>
   </div>
 
-  <!-- Time inputs -->
-  <div class="time-row">
-    <div class="t-grp on-grp">
-      <div class="t-dot green"></div>
-      <input class="t-in" id="iOH" maxlength="2" inputmode="numeric">
-      <span class="sep">:</span>
-      <input class="t-in" id="iOM" maxlength="2" inputmode="numeric">
-    </div>
-    <div class="t-grp off-grp">
-      <div class="t-dot red"></div>
-      <input class="t-in" id="iFH" maxlength="2" inputmode="numeric">
-      <span class="sep">:</span>
-      <input class="t-in" id="iFM" maxlength="2" inputmode="numeric">
-    </div>
-  </div>
-
-  <!-- Day selector -->
-  <div class="days" id="days"></div>
-
-  <!-- Apply button -->
-  <button class="apply" id="applyBtn">Apply Schedule</button>
-  <div class="note">Drag handles on the clock · type in the boxes · 5-min snap</div>
+  <!-- Schedule info text -->
+  <div class="mi-sched-info" id="miSchedInfo"></div>
 
   <div class="mi-div"></div>
-
-  <!-- Energy -->
   <div class="mi-sec">Energy</div>
   <div class="mi-energy" id="miEnergy"></div>
+
+  <button class="mi-edit" id="miEdit">Edit Schedule</button>
 </div>`;
 
     this._buildChips();
     this._buildToggle();
     this._buildModeButtons();
     this._buildProfileTabs();
-    this._buildDays();
     this._buildMarkers();
     this._buildEnergy();
     this._bindEvents();
@@ -584,7 +497,12 @@ class PikOutletMoreInfo extends HTMLElement {
       const chip = document.createElement('button');
       chip.className = 'mi-chip'; chip.dataset.idx = i;
       chip.innerHTML = `<span class="mi-cdot"></span>Socket ${i}`;
-      chip.addEventListener('click', () => this._selectSocket(i));
+      chip.addEventListener('click', () => {
+        this._socket = i;
+        this._profile = 1;
+        this._entityId = this._swId(i) || this._entityId;
+        this._update();
+      });
       c.appendChild(chip);
     }
   }
@@ -607,40 +525,29 @@ class PikOutletMoreInfo extends HTMLElement {
   }
 
   _buildProfileTabs() {
-    const c = this._$('prTabs');
+    const c = this._$('miProfRow');
     const lbl = document.createElement('span');
-    lbl.className = 'tab-label'; lbl.textContent = 'Profile';
+    lbl.className = 'mi-prof-lbl'; lbl.textContent = 'Profile';
     c.appendChild(lbl);
     for (let i = 1; i <= PROFILES; i++) {
       const btn = document.createElement('button');
-      btn.className = 'tab-btn'; btn.textContent = i; btn.dataset.idx = i;
-      btn.addEventListener('click', () => this._selectProfile(i));
+      btn.className = 'mi-prof-btn'; btn.textContent = i; btn.dataset.idx = i;
+      btn.addEventListener('click', () => {
+        this._profile = i;
+        this._update();
+      });
       c.appendChild(btn);
     }
   }
 
-  _buildDays() {
-    const c = this._$('days');
-    DAYS.forEach(d => {
-      const btn = document.createElement('button');
-      btn.className = 'd-btn'; btn.textContent = d.l; btn.dataset.bit = d.b;
-      btn.addEventListener('click', () => {
-        this._days ^= (1 << d.b);
-        this._dirty = true;
-        this._updateUI();
-      });
-      c.appendChild(btn);
-    });
-  }
-
   _buildMarkers() {
-    const g = this._$('markers');
+    const g = this._$('miMarkers');
     for (let h = 0; h < 24; h++) {
       const a = (h / 24) * 360;
       const rad = (a - 90) * Math.PI / 180;
       const isLbl = h % 3 === 0;
       const isMaj = h % 6 === 0;
-
+      // Tick
       const len = isLbl ? 9 : 4;
       const r1  = isLbl ? TICK_IN - 2 : TICK_IN + 1;
       const ln = document.createElementNS(SVG_NS, 'line');
@@ -648,15 +555,15 @@ class PikOutletMoreInfo extends HTMLElement {
       ln.setAttribute('y1', CY + r1 * Math.sin(rad));
       ln.setAttribute('x2', CX + (r1 + len) * Math.cos(rad));
       ln.setAttribute('y2', CY + (r1 + len) * Math.sin(rad));
-      ln.setAttribute('class', 'tick');
+      ln.setAttribute('class', 'mi-tick');
       ln.style.strokeWidth = isLbl ? '1.5' : '0.7';
       g.appendChild(ln);
-
+      // Label every 3h
       if (isLbl) {
         const [lx, ly] = polar(a, LBL_R);
         const t = document.createElementNS(SVG_NS, 'text');
         t.setAttribute('x', lx); t.setAttribute('y', ly);
-        t.setAttribute('class', isMaj ? 'h-lbl major' : 'h-lbl');
+        t.setAttribute('class', isMaj ? 'mi-h-lbl major' : 'mi-h-lbl');
         t.textContent = String(h);
         g.appendChild(t);
       }
@@ -688,101 +595,24 @@ class PikOutletMoreInfo extends HTMLElement {
     });
   }
 
-  /* ══════════════════════════════════════════════════════════════════════
-     Event binding
-     ══════════════════════════════════════════════════════════════════════ */
   _bindEvents() {
-    // Enable toggle (profile enable)
-    this._$('toggle').addEventListener('click', () => {
-      this._enabled = !this._enabled;
-      this._dirty = true;
-      this._updateUI();
+    this._$('miTmrTog').addEventListener('click', () => this._toggleTimer());
+    this._$('miEdit').addEventListener('click', () => {
+      const ha = getHA();
+      if (ha) {
+        const dlg = ha.shadowRoot?.querySelector('ha-more-info-dialog');
+        if (dlg) {
+          try { dlg.closeDialog?.(); } catch(e) {}
+          try { dlg.close?.(); } catch(e) {}
+        }
+      }
     });
-
-    // Warning → enable socket timer
-    this._$('warnBtn').addEventListener('click', () => this._enableSocketTimer());
-
-    // Drag handles (pointer events → works for mouse + touch)
-    ['hitOn','hOn'].forEach(id => {
-      this._$(id).addEventListener('pointerdown', e => this._startDrag('on', e));
-    });
-    ['hitOff','hOff'].forEach(id => {
-      this._$(id).addEventListener('pointerdown', e => this._startDrag('off', e));
-    });
-
-    // Time inputs
-    ['iOH','iOM','iFH','iFM'].forEach(id => {
-      const el = this._$(id);
-      el.addEventListener('change', () => this._syncInputs());
-      el.addEventListener('blur',   () => this._syncInputs());
-      el.addEventListener('focus',  () => el.select());
-      el.addEventListener('keydown', e => this._inputKey(id, e));
-    });
-
-    // Apply
-    this._$('applyBtn').addEventListener('click', () => this._apply());
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     State loading — read from entity attributes
+     Update UI — mutate existing DOM (no re-render)
      ══════════════════════════════════════════════════════════════════════ */
-  _loadState() {
-    if (!this._hass) return;
-    const teId = this._teId();
-    const teState = teId ? this._hass.states[teId] : null;
-
-    if (teState?.attributes?.profiles) {
-      const p = teState.attributes.profiles[this._profile - 1];
-      if (p) {
-        this._onMin   = (p.hour_on || 0) * 60 + (p.minute_on || 0);
-        this._offMin  = (p.hour_off || 0) * 60 + (p.minute_off || 0);
-        this._days    = p.days || 0;
-        this._enabled = !!p.enabled;
-      }
-    } else if (this._profile === 1) {
-      this._loadFromTimeEntities();
-    }
-
-    // Defaults for unconfigured profiles (all-zero)
-    if (this._onMin === 0 && this._offMin === 0) {
-      this._onMin = 7 * 60;
-      this._offMin = 22 * 60;
-      if (this._days === 0) this._days = 0b0111110;
-    }
-    // Safety: offMin must be > onMin
-    if (this._offMin <= this._onMin) {
-      this._offMin = Math.min(this._onMin + SNAP, 1435);
-    }
-  }
-
-  _loadFromTimeEntities() {
-    const s = this._socket;
-    const pfx = this._devMap?.prefix || 'pik_outlet';
-
-    const parse = (entityId) => {
-      const st = this._hass.states[entityId];
-      if (st && st.state && st.state !== 'unknown' && st.state !== 'unavailable') {
-        const [h, m] = st.state.split(':').map(Number);
-        if (!isNaN(h) && !isNaN(m)) return h * 60 + m;
-      }
-      return null;
-    };
-
-    const onV  = parse(`time.${pfx}_socket_${s}_schedule_on`);
-    const offV = parse(`time.${pfx}_socket_${s}_schedule_off`);
-    if (onV  !== null) this._onMin = onV;
-    if (offV !== null) this._offMin = offV;
-
-    const dSt = this._hass.states[`select.${pfx}_socket_${s}_schedule_days`];
-    if (dSt?.attributes && typeof dSt.attributes.days_bitmask === 'number') {
-      this._days = dSt.attributes.days_bitmask;
-    }
-  }
-
-  /* ══════════════════════════════════════════════════════════════════════
-     UI update — mutate existing DOM nodes (no re-render)
-     ══════════════════════════════════════════════════════════════════════ */
-  _updateUI() {
+  _update() {
     if (!this._hass || !this._built) return;
 
     const swEid = this._swId();
@@ -819,88 +649,36 @@ class PikOutletMoreInfo extends HTMLElement {
       b.classList.remove('sel', 'sel-off');
       if (isSel) b.classList.add(m === 'Off' ? 'sel-off' : 'sel');
     });
+    // Hide mode row if no mode entity
     this._$('miModeRow').style.display = modeEid ? '' : 'none';
 
-    // ── Profile tabs (with dot indicators) ──
-    this._$('prTabs').querySelectorAll('.tab-btn').forEach(b => {
+    // Timer badge + toggle
+    const tmrOn = teSt && teSt.state === 'on';
+    const badge = this._$('miBadge');
+    badge.textContent = tmrOn ? 'Active' : 'Off';
+    badge.className = 'mi-badge ' + (tmrOn ? 'on' : 'off');
+    this._$('miTmrTog').classList.toggle('on', !!tmrOn);
+
+    // Profile tabs with dots
+    const profiles = (teSt?.attributes?.profiles) || [];
+    this._$('miProfRow').querySelectorAll('.mi-prof-btn').forEach(b => {
       const idx = +b.dataset.idx;
       b.classList.toggle('sel', idx === this._profile);
-
-      let dot = b.querySelector('.dot');
-      const profs = teSt?.attributes?.profiles;
-      if (profs && profs[idx - 1]) {
-        const p = profs[idx - 1];
-        const configured = p.days > 0 || p.hour_on > 0 || p.hour_off > 0;
-        if (configured) {
-          if (!dot) { dot = document.createElement('span'); b.appendChild(dot); }
-          dot.className = 'dot ' + (p.enabled ? 'on' : 'off');
-        } else if (dot) { dot.remove(); }
+      // Dot indicator
+      let dot = b.querySelector('.mi-prof-dot');
+      const p = profiles[idx - 1];
+      const configured = p && (p.days > 0 || p.hour_on > 0 || p.hour_off > 0
+                              || p.minute_on > 0 || p.minute_off > 0);
+      if (configured) {
+        if (!dot) { dot = document.createElement('span'); b.appendChild(dot); }
+        dot.className = 'mi-prof-dot ' + (p.enabled ? 'on' : 'off');
       } else if (dot) { dot.remove(); }
     });
 
-    // ── Enable toggle ──
-    this._$('toggle').classList.toggle('on', this._enabled);
+    // Circular clock
+    this._updateClock(profiles);
 
-    // ── Warning (socket timer disabled) ──
-    const socketOn = teSt && teSt.state === 'on';
-    this._$('warn').classList.toggle('show', teSt != null && !socketOn);
-
-    // ── SVG arcs ──
-    const oa = min2deg(this._onMin);
-    const fa = min2deg(this._offMin);
-    this._$('arcG').setAttribute('d', this._offMin > this._onMin ? arcD(oa, fa) : '');
-    const redParts = [];
-    if (this._onMin > 0)     redParts.push(arcD(0, oa));
-    if (this._offMin < 1440) redParts.push(arcD(fa, 359.9));
-    this._$('arcR').setAttribute('d', redParts.join(' '));
-
-    const dragging = !!this._drag;
-    ['arcG','arcR'].forEach(id => this._$(id).classList.toggle('glow', dragging));
-
-    // ── Handle positions ──
-    const [onX, onY]   = polar(oa);
-    const [offX, offY] = polar(fa);
-    ['hOn','hitOn'].forEach(id => {
-      this._$(id).setAttribute('cx', onX);
-      this._$(id).setAttribute('cy', onY);
-    });
-    ['hOff','hitOff'].forEach(id => {
-      this._$(id).setAttribute('cx', offX);
-      this._$(id).setAttribute('cy', offY);
-    });
-    this._$('hOn').classList.toggle('big', this._drag === 'on');
-    this._$('hOff').classList.toggle('big', this._drag === 'off');
-
-    // ── Centre duration text ──
-    const dm = this._offMin - this._onMin;
-    if (dm > 0) {
-      const dh = Math.floor(dm / 60), dmin = dm % 60;
-      this._$('durTxt').textContent = dh + 'h' + (dmin ? ' ' + dmin + 'm' : '');
-    } else {
-      this._$('durTxt').textContent = '--';
-    }
-
-    // ── Time inputs (skip if focused to avoid overwriting user typing) ──
-    const active = this.shadowRoot.activeElement;
-    if (active !== this._$('iOH')) this._$('iOH').value = pad(Math.floor(this._onMin / 60));
-    if (active !== this._$('iOM')) this._$('iOM').value = pad(this._onMin % 60);
-    if (active !== this._$('iFH')) this._$('iFH').value = pad(Math.floor(this._offMin / 60));
-    if (active !== this._$('iFM')) this._$('iFM').value = pad(this._offMin % 60);
-
-    // ── Day buttons ──
-    this._$('days').querySelectorAll('.d-btn').forEach(b => {
-      b.classList.toggle('sel', !!(this._days & (1 << +b.dataset.bit)));
-    });
-
-    // ── Apply button ──
-    if (!this._applying) {
-      const btn = this._$('applyBtn');
-      btn.disabled = false;
-      btn.className = 'apply';
-      btn.textContent = this._dirty ? 'Apply Schedule  \u25CF' : 'Apply Schedule';
-    }
-
-    // ── Energy sensors ──
+    // Energy sensors
     ['voltage', 'current', 'power', 'frequency'].forEach(k => {
       const el = this._$('mie_' + k);
       if (!el) return;
@@ -911,181 +689,122 @@ class PikOutletMoreInfo extends HTMLElement {
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     Drag interaction (from pik-schedule-card)
+     Circular clock update
      ══════════════════════════════════════════════════════════════════════ */
-  _startDrag(which, e) {
-    e.preventDefault();
-    this._drag = which;
-    this._dirty = true;
+  _updateClock(profiles) {
+    const p = profiles[this._profile - 1];
+    const configured = p && (p.days > 0 || p.hour_on > 0 || p.hour_off > 0
+                            || p.minute_on > 0 || p.minute_off > 0);
 
-    this._bMove = ev => this._onMove(ev);
-    this._bUp   = ()  => this._onUp();
-    window.addEventListener('pointermove', this._bMove);
-    window.addEventListener('pointerup',   this._bUp);
-    this._updateUI();
-  }
+    const arcG = this._$('miArcG');
+    const arcR = this._$('miArcR');
+    const durTxt = this._$('miDurTxt');
+    const durSub = this._$('miDurSub');
+    const emptyTxt = this._$('miEmptyTxt');
+    const onDot = this._$('miOnDot');
+    const offDot = this._$('miOffDot');
+    const infoDiv = this._$('miSchedInfo');
 
-  _onMove(e) {
-    if (!this._drag) return;
-    e.preventDefault();
-    const m = deg2min(this._getAngle(e));
-    if (this._drag === 'on') {
-      this._onMin = Math.max(0, Math.min(m, this._offMin - SNAP));
+    if (!configured) {
+      // Empty profile — show empty state
+      arcG.setAttribute('d', '');
+      arcR.setAttribute('d', '');
+      arcG.className.baseVal = 'mi-arc empty';
+      arcR.className.baseVal = 'mi-arc empty';
+      durTxt.style.display = 'none';
+      durSub.style.display = 'none';
+      emptyTxt.style.display = '';
+      onDot.style.display = 'none';
+      offDot.style.display = 'none';
+      infoDiv.innerHTML = `<div class="mi-sched-empty">Profile ${this._profile} is not configured</div>`;
     } else {
-      this._offMin = Math.max(this._onMin + SNAP, Math.min(m, 1440 - SNAP));
-    }
-    this._updateUI();
-  }
+      emptyTxt.style.display = 'none';
+      durTxt.style.display = '';
+      durSub.style.display = '';
 
-  _onUp() {
-    this._drag = null;
-    window.removeEventListener('pointermove', this._bMove);
-    window.removeEventListener('pointerup',   this._bUp);
-    this._updateUI();
-  }
+      const onMin  = (p.hour_on || 0) * 60 + (p.minute_on || 0);
+      const offMin = (p.hour_off || 0) * 60 + (p.minute_off || 0);
+      const oa = min2deg(onMin);
+      const fa = min2deg(offMin);
 
-  _getAngle(e) {
-    const svg = this._$('clock');
-    const rect = svg.getBoundingClientRect();
-    const sx = 300 / rect.width, sy = 300 / rect.height;
-    const dx = (e.clientX - rect.left) * sx - CX;
-    const dy = (e.clientY - rect.top) * sy - CY;
-    let a = Math.atan2(dx, -dy) * 180 / Math.PI;
-    return a < 0 ? a + 360 : a;
-  }
+      const arcClass = p.enabled ? '' : ' dim';
 
-  /* ══════════════════════════════════════════════════════════════════════
-     Input handling (from pik-schedule-card)
-     ══════════════════════════════════════════════════════════════════════ */
-  _syncInputs() {
-    let oh = parseInt(this._$('iOH').value) || 0;
-    let om = parseInt(this._$('iOM').value) || 0;
-    let fh = parseInt(this._$('iFH').value) || 0;
-    let fm = parseInt(this._$('iFM').value) || 0;
-
-    oh = Math.max(0, Math.min(23, oh));
-    om = Math.max(0, Math.min(59, om));
-    fh = Math.max(0, Math.min(23, fh));
-    fm = Math.max(0, Math.min(59, fm));
-
-    let newOn  = oh * 60 + om;
-    let newOff = fh * 60 + fm;
-    if (newOff <= newOn) newOff = Math.min(newOn + SNAP, 1439);
-
-    this._onMin  = newOn;
-    this._offMin = newOff;
-    this._dirty  = true;
-    this._updateUI();
-  }
-
-  _inputKey(id, e) {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    const el   = this._$(id);
-    let val    = parseInt(el.value) || 0;
-    const isH  = id === 'iOH' || id === 'iFH';
-    const max  = isH ? 23 : 59;
-    const step = isH ? 1  : 5;
-    val = e.key === 'ArrowUp'
-      ? Math.min(max, val + step)
-      : Math.max(0,   val - step);
-    el.value = pad(val);
-    this._syncInputs();
-  }
-
-  /* ══════════════════════════════════════════════════════════════════════
-     Tab switching
-     ══════════════════════════════════════════════════════════════════════ */
-  _selectSocket(s) {
-    if (s === this._socket) return;
-    this._socket  = s;
-    this._profile = 1;
-    this._dirty   = false;
-    this._entityId = this._swId(s) || this._entityId;
-    this._devMap = buildDeviceMap(this._entityId);
-    this._loadState();
-    this._updateUI();
-  }
-
-  _selectProfile(p) {
-    if (p === this._profile) return;
-    this._profile = p;
-    this._dirty   = false;
-    this._loadState();
-    this._updateUI();
-  }
-
-  /* ══════════════════════════════════════════════════════════════════════
-     Apply — send to device via HA service (from pik-schedule-card)
-     ══════════════════════════════════════════════════════════════════════ */
-  async _apply() {
-    if (this._applying || !this._hass) return;
-    const deviceId = this._devMap?.deviceId;
-    if (!deviceId) {
-      this._flashBtn('No device ID!', 'err');
-      return;
-    }
-
-    const btn = this._$('applyBtn');
-    this._applying = true;
-    btn.disabled = true;
-    btn.textContent = 'Applying\u2026';
-
-    try {
-      // 1. Set the timer profile on the device
-      await this._hass.callService(DOMAIN, 'set_timer_profile', {
-        device_id:  deviceId,
-        socket:     this._socket,
-        profile:    this._profile,
-        days:       this._days,
-        hour_on:    Math.floor(this._onMin / 60),
-        minute_on:  this._onMin % 60,
-        hour_off:   Math.floor(this._offMin / 60),
-        minute_off: this._offMin % 60,
-        enabled:    this._enabled,
-      });
-
-      // 2. Auto-enable the socket timer if the profile is enabled
-      if (this._enabled) {
-        const teId = this._teId();
-        const teState = this._hass.states[teId];
-        if (teState && teState.state !== 'on') {
-          await this._hass.callService('switch', 'turn_on', {
-            entity_id: teId,
-          });
-        }
+      // Green arc = ON period
+      if (offMin > onMin) {
+        arcG.setAttribute('d', arcD(oa, fa));
+        arcG.className.baseVal = 'mi-arc green' + arcClass;
+      } else {
+        arcG.setAttribute('d', '');
+        arcG.className.baseVal = 'mi-arc empty';
       }
 
-      this._dirty = false;
-      this._flashBtn('Applied  \u2713', 'ok');
-    } catch (err) {
-      console.error('PIK more-info: apply failed', err);
-      this._flashBtn('Error!', 'err');
+      // Red arcs = OFF period (before ON, after OFF)
+      const redParts = [];
+      if (onMin > 0)     redParts.push(arcD(0, oa));
+      if (offMin < 1440) redParts.push(arcD(fa, 359.9));
+      if (redParts.length && p.enabled) {
+        arcR.setAttribute('d', redParts.join(' '));
+        arcR.className.baseVal = 'mi-arc red';
+      } else {
+        arcR.setAttribute('d', redParts.join(' '));
+        arcR.className.baseVal = 'mi-arc' + (redParts.length ? ' dim' : ' empty');
+      }
+
+      // ON/OFF dots on the ring
+      const [onX, onY] = polar(oa);
+      const [offX, offY] = polar(fa);
+      onDot.setAttribute('cx', onX); onDot.setAttribute('cy', onY);
+      offDot.setAttribute('cx', offX); offDot.setAttribute('cy', offY);
+      onDot.style.display = '';
+      offDot.style.display = '';
+
+      // Duration text
+      const dm = offMin > onMin ? offMin - onMin : 0;
+      if (dm > 0) {
+        const dh = Math.floor(dm / 60), dmin = dm % 60;
+        durTxt.textContent = dh + 'h' + (dmin ? ' ' + dmin + 'm' : '');
+        durSub.textContent = p.enabled ? 'ON duration' : 'Disabled';
+      } else {
+        durTxt.textContent = '--';
+        durSub.textContent = '';
+      }
+
+      // Info text below clock
+      infoDiv.innerHTML =
+        `<div class="mi-sched-time">`
+        + `${pad(p.hour_on)}:${pad(p.minute_on)}`
+        + `<span class="mi-sched-arrow">\u2192</span>`
+        + `${pad(p.hour_off)}:${pad(p.minute_off)}`
+        + `</div>`
+        + `<div class="mi-sched-days">${daysStr(p.days)}</div>`;
     }
+
+    // Now indicator
+    this._updateNowHand();
   }
 
-  _flashBtn(text, cls) {
-    const btn = this._$('applyBtn');
-    btn.textContent = text;
-    btn.className = 'apply ' + cls;
-    setTimeout(() => {
-      this._applying = false;
-      this._updateUI();
-    }, cls === 'err' ? 3000 : 2000);
+  _updateNowHand() {
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const nowDeg = min2deg(nowMin);
+    const rad = (nowDeg - 90) * Math.PI / 180;
+    const handLen = R - 13;
+    const hand = this._$('miNowHand');
+    hand.setAttribute('x2', CX + handLen * Math.cos(rad));
+    hand.setAttribute('y2', CY + handLen * Math.sin(rad));
   }
 
   /* ══════════════════════════════════════════════════════════════════════
      Actions
      ══════════════════════════════════════════════════════════════════════ */
-  async _enableSocketTimer() {
-    if (!this._hass) return;
+  async _toggleTimer() {
+    const teId = this._teId();
+    const st = this._hass?.states[teId];
+    if (!st) return;
     try {
-      await this._hass.callService('switch', 'turn_on', {
-        entity_id: this._teId(),
-      });
-    } catch (err) {
-      console.error('PIK more-info: enable timer failed', err);
-    }
+      await this._hass.callService('switch', st.state === 'on' ? 'turn_off' : 'turn_on',
+        { entity_id: teId });
+    } catch (e) { console.error('PIK more-info: timer toggle failed', e); }
   }
 
   async _setMode(mode) {
@@ -1120,33 +839,41 @@ function waitAndReplace(entityId) {
     const dialog = ha.shadowRoot.querySelector('ha-more-info-dialog');
     if (!dialog?.shadowRoot) return;
 
+    // Find the content area — HA 2024+ uses tabbed more-info
     const moreInfoInfo = dialog.shadowRoot.querySelector('ha-more-info-info');
     const haDialog = dialog.shadowRoot.querySelector('ha-dialog');
     if (!haDialog && !moreInfoInfo) return;
 
+    // Check dialog is open
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
                 || dialog.hasAttribute('opened') || dialog.open;
     if (!isOpen && !moreInfoInfo) return;
 
     clearInterval(timer);
 
+    // Check if we already injected for this entity
     const existing = dialog.shadowRoot.querySelector('pik-outlet-more-info');
     if (existing && existing.entityId === entityId) {
       existing.hass = getHass();
       return;
     }
 
+    // Create our element
     const pikEl = document.createElement('pik-outlet-more-info');
     pikEl.hass = getHass();
     pikEl.entityId = entityId;
 
+    // Hide default more-info content
     if (moreInfoInfo) moreInfoInfo.style.display = 'none';
 
+    // Also hide ha-more-info-history-and-logbook if present
     const history = dialog.shadowRoot.querySelector('ha-more-info-history-and-logbook');
     if (history) history.style.display = 'none';
 
+    // Remove any previous PIK element
     if (existing) existing.remove();
 
+    // Insert our element
     const insertParent = moreInfoInfo?.parentNode || haDialog?.querySelector('.content') || dialog.shadowRoot;
     if (insertParent === dialog.shadowRoot) {
       dialog.shadowRoot.appendChild(pikEl);
@@ -1158,13 +885,18 @@ function waitAndReplace(entityId) {
       }
     }
 
+    // Subscribe to hass updates so our element stays current
     _trackHassUpdates(dialog, pikEl, entityId);
 
   }, POLL_MS);
 }
 
+/**
+ * Keep pushing hass updates to our element while the dialog is open.
+ */
 function _trackHassUpdates(dialog, pikEl, entityId) {
   const interval = setInterval(() => {
+    // Check if dialog is still in DOM and open
     if (!dialog.isConnected || !pikEl.isConnected) {
       clearInterval(interval);
       return;
@@ -1173,6 +905,7 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
     if (hass) pikEl.hass = hass;
   }, 1000);
 
+  // Also observe dialog closing → remove our element and restore defaults
   const obs = new MutationObserver(() => {
     const haDialog = dialog.shadowRoot?.querySelector('ha-dialog');
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
@@ -1181,6 +914,7 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
       clearInterval(interval);
       obs.disconnect();
 
+      // Clean up — restore defaults for next non-PIK entity
       const existing = dialog.shadowRoot?.querySelector('pik-outlet-more-info');
       if (existing) existing.remove();
       const moreInfoInfo = dialog.shadowRoot?.querySelector('ha-more-info-info');
@@ -1194,6 +928,9 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
   }
 }
 
+/**
+ * Restore default dialog content when opening a NON-PIK entity.
+ */
 function restoreDefaults() {
   const ha = getHA();
   if (!ha?.shadowRoot) return;
@@ -1212,21 +949,25 @@ function restoreDefaults() {
 
 /* ── Main event hooks ──────────────────────────────────────────────────── */
 
+// Listen in CAPTURE phase on document to see the event early
 document.addEventListener('hass-more-info', (ev) => {
   const entityId = ev.detail?.entityId;
   if (!entityId) return;
 
   if (isPikSocketSwitch(entityId)) {
+    // PIK socket switch → intercept after HA opens the dialog
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         waitAndReplace(entityId);
       });
     });
   } else {
+    // Non-PIK → make sure we clean up any leftover custom content
     requestAnimationFrame(() => restoreDefaults());
   }
 }, true);
 
+// Fallback: observe dialog singleton for entity changes (handles edge cases)
 function setupObserver() {
   const ha = getHA();
   if (!ha?.shadowRoot) {
@@ -1238,6 +979,7 @@ function setupObserver() {
     const dialog = ha.shadowRoot.querySelector('ha-more-info-dialog');
     if (!dialog) return;
 
+    // HA reuses the dialog — watch its entityId property
     let lastEntityId = '';
     const poll = setInterval(() => {
       if (!dialog.isConnected) { clearInterval(poll); return; }
@@ -1258,9 +1000,10 @@ function setupObserver() {
     }, 200);
   };
 
+  // MutationObserver for when dialog element appears
   const obs = new MutationObserver(check);
   obs.observe(ha.shadowRoot, { childList: true });
-  check();
+  check(); // initial check
 }
 
 if (document.readyState === 'complete') {
