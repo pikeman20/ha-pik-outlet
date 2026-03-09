@@ -130,14 +130,14 @@ class PikSocketSwitch(PikOutletEntity, SwitchEntity):
         await self.coordinator.client.set_socket_mode(
             self._socket_id, MODE_MANUAL
         )
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn relay OFF by setting mode to OFF."""
         await self.coordinator.client.set_socket_mode(
             self._socket_id, MODE_OFF
         )
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
     # ── Coordinator update ───────────────────────────────────────────────────
 
@@ -217,7 +217,7 @@ class PikTimerEnableSwitch(PikOutletEntity, SwitchEntity):
         current = list(state.timer_enable) if state and state.timer_enable else list("000000")
         current[self._socket_id] = "1" if enable else "0"
         await self.coordinator.client.set_timer_enable("".join(current))
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable timer for this socket."""

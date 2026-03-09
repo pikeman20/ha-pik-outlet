@@ -82,8 +82,7 @@ class PikSyncTimeButton(PikOutletEntity, ButtonEntity):
             _LOGGER.info("RTC synced to %s", now.isoformat())
         else:
             _LOGGER.warning("Failed to sync RTC")
-
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
 
 # ── Refresh Button ───────────────────────────────────────────────────────────
@@ -104,4 +103,4 @@ class PikRefreshButton(PikOutletEntity, ButtonEntity):
         """Force full status query."""
         if self.coordinator.client.is_connected:
             await self.coordinator.client.request_full_status()
-        await self.coordinator.async_request_refresh()
+        # Refresh button: Full status already queried above — callback handles the rest

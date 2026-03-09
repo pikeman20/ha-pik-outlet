@@ -199,7 +199,7 @@ class PikModeSelect(PikOutletEntity, SelectEntity):
         else:
             await self.coordinator.client.set_all_modes(raw_mode)
 
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
     # ── Coordinator update ───────────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ class PikScheduleDaySelect(PikOutletEntity, SelectEntity):
             minute_off=profile.minute_off,
             enabled=True,  # auto-enable when user picks days
         )
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
     @callback
     def _handle_coordinator_update(self) -> None:

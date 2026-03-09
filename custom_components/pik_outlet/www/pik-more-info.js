@@ -547,7 +547,7 @@ class PikOutletMoreInfo extends HTMLElement {
   <div class="mi-div"></div>
 
   <!-- Energy -->
-  <div class="mi-sec">Energy</div>
+  <div class="mi-sec">Energy (Total)</div>
   <div class="mi-energy" id="miEnergy"></div>
 </div>`;
 

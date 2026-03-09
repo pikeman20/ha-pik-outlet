@@ -139,7 +139,7 @@ class PikScheduleTime(PikOutletEntity, TimeEntity):
             minute_off=minute_off,
             enabled=True,  # auto-enable profile when user sets a time
         )
-        await self.coordinator.async_request_refresh()
+        # State already updated via send_command push callback — no blocking refresh
 
     # ── Coordinator update ───────────────────────────────────────────────────
 
