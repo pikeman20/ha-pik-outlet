@@ -17,6 +17,8 @@
 'use strict';
 
 const VERSION      = '2.2.1';
+const DEBUG        = true;   // ← set false to silence logs
+function dbg(...a) { if (DEBUG) console.log('[PIK-DBG]', ...a); }
 const DOMAIN       = 'pik_outlet';
 const POLL_MS      = 60;
 const POLL_TIMEOUT = 3000;
@@ -1094,12 +1096,13 @@ if (!customElements.get('pik-outlet-more-info')) {
  * Wait for the dialog DOM to be ready, then inject our custom content.
  */
 function waitAndReplace(entityId) {
+  dbg('waitAndReplace called for', entityId);
   const ha = getHA();
   if (!ha?.shadowRoot) return;
 
   const start = Date.now();
   const timer = setInterval(() => {
-    if (Date.now() - start > POLL_TIMEOUT) { clearInterval(timer); return; }
+    if (Date.now() - start > POLL_TIMEOUT) { dbg('waitAndReplace TIMEOUT for', entityId); clearInterval(timer); return; }
 
     const dialog = ha.shadowRoot.querySelector('ha-more-info-dialog');
     if (!dialog?.shadowRoot) return;
@@ -1110,12 +1113,17 @@ function waitAndReplace(entityId) {
 
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
                 || dialog.hasAttribute('opened') || dialog.open;
+    dbg('waitAndReplace poll — haDialog.open:', haDialog?.open,
+        'haDialog[open]:', haDialog?.hasAttribute('open'),
+        'dialog[opened]:', dialog.hasAttribute('opened'),
+        '→ isOpen:', isOpen);
     if (!isOpen && !moreInfoInfo) return;
 
     clearInterval(timer);
 
     const existing = dialog.shadowRoot.querySelector('pik-outlet-more-info');
     if (existing && existing.entityId === entityId) {
+      dbg('waitAndReplace: pikEl already present, updating hass only');
       existing.hass = getHass();
       return;
     }
@@ -1124,6 +1132,7 @@ function waitAndReplace(entityId) {
     pikEl.hass = getHass();
     pikEl.entityId = entityId;
 
+    dbg('waitAndReplace: INJECTING pik-outlet-more-info into dialog');
     // Inject a persistent <style> into the dialog shadowRoot so HA's Lit
     // re-renders (e.g. when DevTools opens) cannot reset display back to ''.
     if (!dialog.shadowRoot.getElementById('pik-override-style')) {
@@ -1150,6 +1159,7 @@ function waitAndReplace(entityId) {
       }
     }
 
+    dbg('waitAndReplace: pikEl inserted, starting _trackHassUpdates');
     _trackHassUpdates(dialog, pikEl, entityId);
 
   }, POLL_MS);
@@ -1158,6 +1168,7 @@ function waitAndReplace(entityId) {
 function _trackHassUpdates(dialog, pikEl, entityId) {
   const interval = setInterval(() => {
     if (!dialog.isConnected) {
+      dbg('_track interval: dialog disconnected, stopping');
       clearInterval(interval);
       return;
     }
@@ -1167,6 +1178,7 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
                || dialog._entityId
                || dialog._params?.entityId
                || dialog.getAttribute('entity-id') || '';
+      dbg('_track interval: pikEl REMOVED from DOM, eid=', eid);
       if (eid && isPikSocketSwitch(eid)) {
         waitAndReplace(eid);
       }
@@ -1180,18 +1192,30 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
   // Debounced close-detection: MutationObserver fires during re-renders
   // where open state can be transiently falsy. Wait 300ms and re-check.
   let closeTimer = 0;
-  const obs = new MutationObserver(() => {
+  const obs = new MutationObserver((mutations) => {
     const haDialog = dialog.shadowRoot?.querySelector('ha-dialog');
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
                 || dialog.hasAttribute('opened');
+    // Log what mutated to help diagnose spurious triggers
+    const types = mutations.map(m => m.type + (m.attributeName ? '(' + m.attributeName + ')' : '')).join(', ');
+    dbg('_track MutationObserver fired — mutations:', types,
+        '| haDialog.open:', haDialog?.open,
+        '| haDialog[open]:', haDialog?.hasAttribute('open'),
+        '| dialog[opened]:', dialog.hasAttribute('opened'),
+        '| pik-override-style present:', !!dialog.shadowRoot?.getElementById('pik-override-style'),
+        '| pikEl.isConnected:', pikEl.isConnected,
+        '→ isOpen:', isOpen);
     if (!isOpen) {
       if (!closeTimer) {
+        dbg('_track: isOpen=false, starting 800ms close-debounce');
         closeTimer = setTimeout(() => {
           // Re-check after debounce — if still not open, truly closed
           const haD2 = dialog.shadowRoot?.querySelector('ha-dialog');
           const stillOpen = haD2?.open || haD2?.hasAttribute('open')
                          || dialog.hasAttribute('opened');
+          dbg('_track close-debounce fired — stillOpen:', stillOpen);
           if (!stillOpen) {
+            dbg('_track: dialog truly closed, cleaning up');
             clearInterval(interval);
             obs.disconnect();
 
@@ -1203,13 +1227,15 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
             if (moreInfoInfo) moreInfoInfo.style.display = '';
             const history = dialog.shadowRoot?.querySelector('ha-more-info-history-and-logbook');
             if (history) history.style.display = '';
+          } else {
+            dbg('_track: dialog still open after debounce, ignoring');
           }
           closeTimer = 0;
         }, 800);
       }
     } else {
       // Dialog is (still) open — cancel any pending close
-      if (closeTimer) { clearTimeout(closeTimer); closeTimer = 0; }
+      if (closeTimer) { dbg('_track: isOpen again, cancelling close-debounce'); clearTimeout(closeTimer); closeTimer = 0; }
     }
   });
   if (dialog.shadowRoot) {
@@ -1223,6 +1249,7 @@ function restoreDefaults() {
   const dialog = ha.shadowRoot.querySelector('ha-more-info-dialog');
   if (!dialog?.shadowRoot) return;
 
+  dbg('restoreDefaults called');
   const pikStyle = dialog.shadowRoot.getElementById('pik-override-style');
   if (pikStyle) pikStyle.remove();
   const existing = dialog.shadowRoot.querySelector('pik-outlet-more-info');
@@ -1240,6 +1267,7 @@ function restoreDefaults() {
 document.addEventListener('hass-more-info', (ev) => {
   const entityId = ev.detail?.entityId;
   if (!entityId) return;
+  dbg('hass-more-info event — entityId:', entityId, '| isPikSocket:', isPikSocketSwitch(entityId));
 
   if (isPikSocketSwitch(entityId)) {
     requestAnimationFrame(() => {
@@ -1268,17 +1296,21 @@ function setupObserver() {
              || dialog._params?.entityId
              || dialog.getAttribute('entity-id')
              || '';
+    const pikPresent = !!dialog.shadowRoot.querySelector('pik-outlet-more-info');
+    dbg('setupObserver mutation — eid:', eid, '| isPikSocket:', isPikSocketSwitch(eid), '| pikPresent:', pikPresent);
     if (!eid) return;
 
     if (isPikSocketSwitch(eid)) {
       const existing = dialog.shadowRoot.querySelector('pik-outlet-more-info');
       if (!existing || existing.entityId !== eid) {
+        dbg('setupObserver: pikEl missing/wrong, calling waitAndReplace');
         waitAndReplace(eid);
       }
     } else {
       // Only restore if we actually injected our UI (avoids false cleanup
       // when eid is momentarily misread during DevTools / re-render).
-      if (dialog.shadowRoot.querySelector('pik-outlet-more-info')) {
+      if (pikPresent) {
+        dbg('setupObserver: non-PIK entity but pikEl present → restoreDefaults');
         restoreDefaults();
       }
     }
