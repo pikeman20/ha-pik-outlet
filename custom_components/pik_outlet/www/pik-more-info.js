@@ -16,7 +16,7 @@
 (function () {
 'use strict';
 
-const VERSION      = '2.2.0';
+const VERSION      = '2.2.1';
 const DOMAIN       = 'pik_outlet';
 const POLL_MS      = 60;
 const POLL_TIMEOUT = 3000;
@@ -1147,7 +1147,18 @@ function waitAndReplace(entityId) {
 
 function _trackHassUpdates(dialog, pikEl, entityId) {
   const interval = setInterval(() => {
-    if (!dialog.isConnected || !pikEl.isConnected) {
+    if (!dialog.isConnected) {
+      clearInterval(interval);
+      return;
+    }
+    // Re-inject if our element was removed by a LitElement re-render
+    if (!pikEl.isConnected && dialog.isConnected) {
+      const eid = dialog.entityId
+               || dialog._params?.entityId
+               || dialog.getAttribute('entity-id') || '';
+      if (eid && isPikSocketSwitch(eid)) {
+        waitAndReplace(eid);
+      }
       clearInterval(interval);
       return;
     }
@@ -1155,20 +1166,37 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
     if (hass) pikEl.hass = hass;
   }, 1000);
 
+  // Debounced close-detection: MutationObserver fires during re-renders
+  // where open state can be transiently falsy. Wait 300ms and re-check.
+  let closeTimer = 0;
   const obs = new MutationObserver(() => {
     const haDialog = dialog.shadowRoot?.querySelector('ha-dialog');
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
                 || dialog.hasAttribute('opened');
     if (!isOpen) {
-      clearInterval(interval);
-      obs.disconnect();
+      if (!closeTimer) {
+        closeTimer = setTimeout(() => {
+          // Re-check after debounce — if still not open, truly closed
+          const haD2 = dialog.shadowRoot?.querySelector('ha-dialog');
+          const stillOpen = haD2?.open || haD2?.hasAttribute('open')
+                         || dialog.hasAttribute('opened');
+          if (!stillOpen) {
+            clearInterval(interval);
+            obs.disconnect();
 
-      const existing = dialog.shadowRoot?.querySelector('pik-outlet-more-info');
-      if (existing) existing.remove();
-      const moreInfoInfo = dialog.shadowRoot?.querySelector('ha-more-info-info');
-      if (moreInfoInfo) moreInfoInfo.style.display = '';
-      const history = dialog.shadowRoot?.querySelector('ha-more-info-history-and-logbook');
-      if (history) history.style.display = '';
+            const existing = dialog.shadowRoot?.querySelector('pik-outlet-more-info');
+            if (existing) existing.remove();
+            const moreInfoInfo = dialog.shadowRoot?.querySelector('ha-more-info-info');
+            if (moreInfoInfo) moreInfoInfo.style.display = '';
+            const history = dialog.shadowRoot?.querySelector('ha-more-info-history-and-logbook');
+            if (history) history.style.display = '';
+          }
+          closeTimer = 0;
+        }, 300);
+      }
+    } else {
+      // Dialog is (still) open — cancel any pending close
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = 0; }
     }
   });
   if (dialog.shadowRoot) {
@@ -1235,6 +1263,13 @@ function setupObserver() {
           waitAndReplace(eid);
         } else {
           restoreDefaults();
+        }
+      }
+      // Re-inject if custom element was removed by a framework re-render
+      else if (eid && eid === lastEntityId && isPikSocketSwitch(eid)) {
+        const existing = dialog.shadowRoot?.querySelector('pik-outlet-more-info');
+        if (!existing) {
+          waitAndReplace(eid);
         }
       }
     }, 200);
