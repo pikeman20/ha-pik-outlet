@@ -1124,6 +1124,14 @@ function waitAndReplace(entityId) {
     pikEl.hass = getHass();
     pikEl.entityId = entityId;
 
+    // Inject a persistent <style> into the dialog shadowRoot so HA's Lit
+    // re-renders (e.g. when DevTools opens) cannot reset display back to ''.
+    if (!dialog.shadowRoot.getElementById('pik-override-style')) {
+      const s = document.createElement('style');
+      s.id = 'pik-override-style';
+      s.textContent = 'ha-more-info-info,ha-more-info-history-and-logbook{display:none!important}';
+      dialog.shadowRoot.appendChild(s);
+    }
     if (moreInfoInfo) moreInfoInfo.style.display = 'none';
 
     const history = dialog.shadowRoot.querySelector('ha-more-info-history-and-logbook');
@@ -1187,6 +1195,8 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
             clearInterval(interval);
             obs.disconnect();
 
+            const pikStyle = dialog.shadowRoot?.getElementById('pik-override-style');
+            if (pikStyle) pikStyle.remove();
             const existing = dialog.shadowRoot?.querySelector('pik-outlet-more-info');
             if (existing) existing.remove();
             const moreInfoInfo = dialog.shadowRoot?.querySelector('ha-more-info-info');
@@ -1195,7 +1205,7 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
             if (history) history.style.display = '';
           }
           closeTimer = 0;
-        }, 300);
+        }, 800);
       }
     } else {
       // Dialog is (still) open — cancel any pending close
@@ -1213,6 +1223,8 @@ function restoreDefaults() {
   const dialog = ha.shadowRoot.querySelector('ha-more-info-dialog');
   if (!dialog?.shadowRoot) return;
 
+  const pikStyle = dialog.shadowRoot.getElementById('pik-override-style');
+  if (pikStyle) pikStyle.remove();
   const existing = dialog.shadowRoot.querySelector('pik-outlet-more-info');
   if (existing) existing.remove();
 
@@ -1264,7 +1276,11 @@ function setupObserver() {
         waitAndReplace(eid);
       }
     } else {
-      restoreDefaults();
+      // Only restore if we actually injected our UI (avoids false cleanup
+      // when eid is momentarily misread during DevTools / re-render).
+      if (dialog.shadowRoot.querySelector('pik-outlet-more-info')) {
+        restoreDefaults();
+      }
     }
   });
 
