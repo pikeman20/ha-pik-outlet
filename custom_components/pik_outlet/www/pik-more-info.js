@@ -13,9 +13,8 @@
 (function () {
 'use strict';
 
-const VERSION      = '1.0.0';
+const VERSION      = '1.1.0';
 const DOMAIN       = 'pik_outlet';
-const ENTITY_MATCH = /^switch\..*pik_outlet.*_socket_\d+$/;  // socket switches only (not timer_enable)
 const POLL_MS      = 60;
 const POLL_TIMEOUT = 3000;
 const SOCKETS      = 6;
@@ -40,14 +39,104 @@ function daysStr(bm) {
 function getHA() { return document.querySelector('home-assistant'); }
 function getHass() { return getHA()?.hass; }
 
-/* Derive prefix / socket from entity_id */
-function parseEntity(eid) {
-  const sm = eid.match(/_socket_(\d+)$/);
-  const pm = eid.match(/^switch\.(.+?)_socket_\d+$/);
-  return {
-    socket: sm ? parseInt(sm[1]) : 1,
-    prefix: pm ? pm[1] : 'pik_outlet',
-  };
+/**
+ * Check if an entity belongs to the pik_outlet integration.
+ * Uses hass.entities registry (contains `platform` field = integration domain).
+ * Returns false for non-PIK entities or if registry not available.
+ */
+function isPikEntity(entityId) {
+  const hass = getHass();
+  if (!hass?.entities) return false;
+  const entry = hass.entities[entityId];
+  return entry && entry.platform === DOMAIN;
+}
+
+/**
+ * Check if entity is a PIK socket switch (not timer_enable, not sensor, etc.)
+ * Socket switches have translation_key like 'socket_1' (no suffix).
+ * Timer enables have 'socket_1_timer_enable'.
+ */
+function isPikSocketSwitch(entityId) {
+  if (!entityId.startsWith('switch.')) return false;
+  if (!isPikEntity(entityId)) return false;
+  const hass = getHass();
+  const entry = hass.entities[entityId];
+  // translation_key = "socket_N" for socket switches
+  if (entry?.translation_key && /^socket_\d+$/.test(entry.translation_key)) return true;
+  // Fallback: entity_id ends with _socket_N but NOT _timer_enable / _timer
+  if (/_socket_\d+$/.test(entityId) && !/_timer/.test(entityId)) return true;
+  // Fallback: device_class = outlet
+  const st = hass.states[entityId];
+  if (st?.attributes?.device_class === 'outlet' && isPikEntity(entityId)) return true;
+  return false;
+}
+
+/**
+ * Get socket number (1-based) from entity.
+ */
+function getSocketNum(entityId) {
+  const hass = getHass();
+  const entry = hass?.entities?.[entityId];
+  if (entry?.translation_key) {
+    const m = entry.translation_key.match(/socket_(\d+)/);
+    if (m) return parseInt(m[1]);
+  }
+  const m2 = entityId.match(/_socket_(\d+)/);
+  return m2 ? parseInt(m2[1]) : 1;
+}
+
+/**
+ * Build a map of sibling entity IDs from the same device.
+ * Returns { sockets: {1: eid, 2: eid, ...}, timers: {1: eid, ...}, sensors: {voltage: eid, ...} }
+ */
+function buildDeviceMap(entityId) {
+  const hass = getHass();
+  if (!hass?.entities) return null;
+  const entry = hass.entities[entityId];
+  if (!entry?.device_id) return null;
+
+  const map = { sockets: {}, timers: {}, sensors: {} };
+  const SENSOR_KEYS = ['voltage', 'current', 'power', 'frequency'];
+
+  for (const [eid, ent] of Object.entries(hass.entities)) {
+    if (ent.device_id !== entry.device_id || ent.platform !== DOMAIN) continue;
+
+    const tk = ent.translation_key || '';
+
+    // Socket switch: translation_key = "socket_N"
+    if (eid.startsWith('switch.') && /^socket_\d+$/.test(tk)) {
+      const n = parseInt(tk.replace('socket_', ''));
+      map.sockets[n] = eid;
+    }
+    // Timer enable: translation_key = "socket_N_timer_enable"
+    else if (eid.startsWith('switch.') && /^socket_\d+_timer_enable$/.test(tk)) {
+      const n = parseInt(tk.match(/socket_(\d+)/)[1]);
+      map.timers[n] = eid;
+    }
+    // Sensors: match by translation_key or entity_id suffix
+    else if (eid.startsWith('sensor.')) {
+      for (const sk of SENSOR_KEYS) {
+        if (tk === sk || eid.endsWith('_' + sk)) {
+          map.sensors[sk] = eid;
+          break;
+        }
+      }
+    }
+  }
+
+  // Fallback: if translation_key not available, try matching by entity_id patterns
+  if (Object.keys(map.sockets).length === 0) {
+    for (const [eid, ent] of Object.entries(hass.entities)) {
+      if (ent.device_id !== entry.device_id || ent.platform !== DOMAIN) continue;
+      if (!eid.startsWith('switch.')) continue;
+      const sm = eid.match(/_socket_(\d+)$/);
+      if (sm) map.sockets[parseInt(sm[1])] = eid;
+      const tm = eid.match(/_socket_(\d+)_timer/);
+      if (tm && !map.timers[parseInt(tm[1])]) map.timers[parseInt(tm[1])] = eid;
+    }
+  }
+
+  return map;
 }
 
 /* Timeline constants */
@@ -204,17 +293,16 @@ class PikOutletMoreInfo extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._hass     = null;
     this._entityId = '';
-    this._prefix   = '';
     this._socket   = 1;
+    this._devMap   = null;  // {sockets:{}, timers:{}, sensors:{}}
     this._built    = false;
   }
 
   set entityId(v) {
     if (v === this._entityId) return;
     this._entityId = v;
-    const p = parseEntity(v);
-    this._prefix = p.prefix;
-    this._socket = p.socket;
+    this._socket = getSocketNum(v);
+    this._devMap = buildDeviceMap(v);
     this._refresh();
   }
   get entityId() { return this._entityId; }
@@ -232,9 +320,9 @@ class PikOutletMoreInfo extends HTMLElement {
 
   _$(id) { return this.shadowRoot.getElementById(id); }
 
-  _swId(s)  { return `switch.${this._prefix}_socket_${s || this._socket}`; }
-  _teId(s)  { return `switch.${this._prefix}_socket_${s || this._socket}_timer_enable`; }
-  _senId(k) { return `sensor.${this._prefix}_${k}`; }
+  _swId(s)  { const n = s || this._socket; return this._devMap?.sockets?.[n] || ''; }
+  _teId(s)  { const n = s || this._socket; return this._devMap?.timers?.[n] || ''; }
+  _senId(k) { return this._devMap?.sensors?.[k] || ''; }
 
   /* ── Build ────────────────────────────────────────────────────────────── */
   _build() {
@@ -283,7 +371,7 @@ class PikOutletMoreInfo extends HTMLElement {
       chip.innerHTML = `<span class="mi-cdot"></span>Socket ${i}`;
       chip.addEventListener('click', () => {
         this._socket = i;
-        this._entityId = this._swId(i);
+        this._entityId = this._swId(i) || this._entityId;
         this._update();
       });
       c.appendChild(chip);
@@ -310,10 +398,12 @@ class PikOutletMoreInfo extends HTMLElement {
         + `<span class="mi-en-unit">${s.unit}</span></div>`
         + `<div class="mi-en-lbl">${s.lbl}</div>`;
       el.addEventListener('click', () => {
+        const senEid = this._senId(s.key);
+        if (!senEid) return;
         const ha = getHA();
         if (ha) ha.dispatchEvent(new CustomEvent('hass-more-info', {
           bubbles: true, composed: true,
-          detail: { entityId: this._senId(s.key) },
+          detail: { entityId: senEid },
         }));
       });
       row.appendChild(el);
@@ -342,8 +432,10 @@ class PikOutletMoreInfo extends HTMLElement {
   _update() {
     if (!this._hass || !this._built) return;
 
-    const swSt = this._hass.states[this._swId()];
-    const teSt = this._hass.states[this._teId()];
+    const swEid = this._swId();
+    const teEid = this._teId();
+    const swSt = swEid ? this._hass.states[swEid] : null;
+    const teSt = teEid ? this._hass.states[teEid] : null;
     const isOn = swSt && swSt.state === 'on';
 
     // State label
@@ -363,7 +455,8 @@ class PikOutletMoreInfo extends HTMLElement {
       const idx = +c.dataset.idx;
       c.classList.toggle('sel', idx === this._socket);
       const dot = c.querySelector('.mi-cdot');
-      const st = this._hass.states[this._swId(idx)];
+      const chipEid = this._swId(idx);
+      const st = chipEid ? this._hass.states[chipEid] : null;
       dot.className = 'mi-cdot ' + (st && st.state === 'on' ? 'on' : 'off');
     });
 
@@ -385,7 +478,8 @@ class PikOutletMoreInfo extends HTMLElement {
     ['voltage', 'current', 'power', 'frequency'].forEach(k => {
       const el = this._$('mie_' + k);
       if (!el) return;
-      const st = this._hass.states[this._senId(k)];
+      const senEid = this._senId(k);
+      const st = senEid ? this._hass.states[senEid] : null;
       el.textContent = (st && st.state !== 'unknown' && st.state !== 'unavailable')
         ? st.state : '—';
     });
@@ -628,8 +722,8 @@ document.addEventListener('hass-more-info', (ev) => {
   const entityId = ev.detail?.entityId;
   if (!entityId) return;
 
-  if (ENTITY_MATCH.test(entityId)) {
-    // PIK entity → intercept after HA opens the dialog
+  if (isPikSocketSwitch(entityId)) {
+    // PIK socket switch → intercept after HA opens the dialog
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         waitAndReplace(entityId);
@@ -665,7 +759,7 @@ function setupObserver() {
 
       if (eid && eid !== lastEntityId) {
         lastEntityId = eid;
-        if (ENTITY_MATCH.test(eid)) {
+        if (isPikSocketSwitch(eid)) {
           waitAndReplace(eid);
         } else {
           restoreDefaults();
