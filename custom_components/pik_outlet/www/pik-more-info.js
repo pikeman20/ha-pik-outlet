@@ -1108,7 +1108,10 @@ function waitAndReplace(entityId) {
     if (!dialog?.shadowRoot) return;
 
     const moreInfoInfo = dialog.shadowRoot.querySelector('ha-more-info-info');
-    const haDialog = dialog.shadowRoot.querySelector('ha-dialog');
+    var haDialog = dialog.shadowRoot.querySelector('ha-dialog');
+    if(!haDialog)
+      haDialog = dialog.shadowRoot.querySelector('ha-adaptive-dialog');
+
     if (!haDialog && !moreInfoInfo) return;
 
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
@@ -1193,7 +1196,9 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
   // where open state can be transiently falsy. Wait 300ms and re-check.
   let closeTimer = 0;
   const obs = new MutationObserver((mutations) => {
-    const haDialog = dialog.shadowRoot?.querySelector('ha-dialog');
+    var haDialog = dialog.shadowRoot?.querySelector('ha-dialog');
+    if(!haDialog)
+      haDialog = dialog.shadowRoot.querySelector('ha-adaptive-dialog');
     const isOpen = haDialog?.open || haDialog?.hasAttribute('open')
                 || dialog.hasAttribute('opened');
     // Log what mutated to help diagnose spurious triggers
@@ -1210,7 +1215,9 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
         dbg('_track: isOpen=false, starting 800ms close-debounce');
         closeTimer = setTimeout(() => {
           // Re-check after debounce — if still not open, truly closed
-          const haD2 = dialog.shadowRoot?.querySelector('ha-dialog');
+          var haD2 = dialog.shadowRoot?.querySelector('ha-dialog');
+          if(!haD2)
+            haD2 = dialog.shadowRoot.querySelector('ha-adaptive-dialog');
           const stillOpen = haD2?.open || haD2?.hasAttribute('open')
                          || dialog.hasAttribute('opened');
           dbg('_track close-debounce fired — stillOpen:', stillOpen);
