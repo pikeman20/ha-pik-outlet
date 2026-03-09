@@ -60,6 +60,7 @@ _WWW_DIR = os.path.join(os.path.dirname(__file__), "www")
 _CARD_FILES = [
     "pik-schedule-card.js",
     "pik-outlet-card.js",
+    "pik-more-info.js",
 ]
 
 
