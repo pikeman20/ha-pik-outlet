@@ -1081,7 +1081,9 @@ class PikOutletMoreInfo extends HTMLElement {
   }
 }
 
-customElements.define('pik-outlet-more-info', PikOutletMoreInfo);
+if (!customElements.get('pik-outlet-more-info')) {
+  customElements.define('pik-outlet-more-info', PikOutletMoreInfo);
+}
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1244,40 +1246,27 @@ function setupObserver() {
     return;
   }
 
-  const check = () => {
+  const obs = new MutationObserver(() => {
     const dialog = ha.shadowRoot.querySelector('ha-more-info-dialog');
-    if (!dialog) return;
+    if (!dialog?.shadowRoot) return;
 
-    let lastEntityId = '';
-    const poll = setInterval(() => {
-      if (!dialog.isConnected) { clearInterval(poll); return; }
+    const eid = dialog.entityId
+             || dialog._params?.entityId
+             || dialog.getAttribute('entity-id')
+             || '';
+    if (!eid) return;
 
-      const eid = dialog.entityId
-               || dialog._params?.entityId
-               || dialog.getAttribute('entity-id')
-               || '';
-
-      if (eid && eid !== lastEntityId) {
-        lastEntityId = eid;
-        if (isPikSocketSwitch(eid)) {
-          waitAndReplace(eid);
-        } else {
-          restoreDefaults();
-        }
+    if (isPikSocketSwitch(eid)) {
+      const existing = dialog.shadowRoot.querySelector('pik-outlet-more-info');
+      if (!existing || existing.entityId !== eid) {
+        waitAndReplace(eid);
       }
-      // Re-inject if custom element was removed by a framework re-render
-      else if (eid && eid === lastEntityId && isPikSocketSwitch(eid)) {
-        const existing = dialog.shadowRoot?.querySelector('pik-outlet-more-info');
-        if (!existing) {
-          waitAndReplace(eid);
-        }
-      }
-    }, 200);
-  };
+    } else {
+      restoreDefaults();
+    }
+  });
 
-  const obs = new MutationObserver(check);
-  obs.observe(ha.shadowRoot, { childList: true });
-  check();
+  obs.observe(ha.shadowRoot, { childList: true, subtree: true });
 }
 
 if (document.readyState === 'complete') {
