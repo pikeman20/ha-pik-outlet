@@ -282,8 +282,12 @@ class PikBLEClient:
                 self._cmd_response_lines.append(line)
                 if RE_OK.match(line) or RE_ERR.match(line):
                     self._cmd_event.set()
-            elif state_changed and self._on_state_change is not None:
-                # Unsolicited notification → tell coordinator immediately
+
+            # Push state to coordinator immediately on ANY state change,
+            # regardless of whether a command is pending.  This ensures
+            # that unsolicited button-press notifications and command
+            # response data both reach the HA UI without delay.
+            if state_changed and self._on_state_change is not None:
                 self._on_state_change()
 
     # ── Protocol parser ──────────────────────────────────────────────────────
@@ -375,20 +379,18 @@ class PikBLEClient:
             lines = list(self._cmd_response_lines)
             success = any(RE_OK.match(l) for l in lines)
 
-            # Fire state callback for any state changes received during cmd
-            if self._on_state_change is not None:
-                self._on_state_change()
-
             return success, lines
 
     # ── High-level device commands ───────────────────────────────────────────
 
     async def request_full_status(self) -> None:
-        """Query full device state (sockets + master + energy).
+        """Query full device state (master + sockets + energy).
 
+        STATUS now returns MST + SK:1-6 in a single response, so STATUS:0 is
+        no longer needed as a separate call.
         Errors are logged but not raised so partial state is still usable.
         """
-        for cmd in ("STATUS", "STATUS:0", "ENERGY"):
+        for cmd in ("STATUS", "ENERGY"):
             try:
                 await self.send_command(cmd)
             except BleakError:
