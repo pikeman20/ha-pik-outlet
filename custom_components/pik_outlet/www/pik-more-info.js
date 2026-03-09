@@ -1156,6 +1156,7 @@ function _trackHassUpdates(dialog, pikEl, entityId) {
     // Re-inject if our element was removed by a LitElement re-render
     if (!pikEl.isConnected && dialog.isConnected) {
       const eid = dialog.entityId
+               || dialog._entityId
                || dialog._params?.entityId
                || dialog.getAttribute('entity-id') || '';
       if (eid && isPikSocketSwitch(eid)) {
@@ -1251,6 +1252,7 @@ function setupObserver() {
     if (!dialog?.shadowRoot) return;
 
     const eid = dialog.entityId
+             || dialog._entityId
              || dialog._params?.entityId
              || dialog.getAttribute('entity-id')
              || '';
