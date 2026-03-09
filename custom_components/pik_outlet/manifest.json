@@ -6,7 +6,8 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "bluetooth"
+    "bluetooth",
+    "http"
   ],
   "after_dependencies": [
     "frontend",
