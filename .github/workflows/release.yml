@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"           # Triggered by pushing a tag like v1.0.5
+
+permissions:
+  contents: write      # Needed to create GitHub Release
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate manifest version matches tag
+        run: |
+          MANIFEST_VER=$(python3 -c "import json; print(json.load(open('custom_components/pik_outlet/manifest.json'))['version'])")
+          TAG_VER="${{ steps.version.outputs.version }}"
+          echo "Manifest version: $MANIFEST_VER"
+          echo "Tag version:      $TAG_VER"
+          if [ "$MANIFEST_VER" != "$TAG_VER" ]; then
+            echo "::error::Version mismatch! manifest.json=$MANIFEST_VER, tag=$TAG_VER"
+            exit 1
+          fi
+
+      - name: Create zip for release
+        run: |
+          cd custom_components/pik_outlet
+          zip -r ../../pik_outlet.zip . -x '*.pyc' '__pycache__/*'
+          cd ../..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "v${{ steps.version.outputs.version }}"
+          body: |
+            ## PIK BLE 6-Switch Outlet v${{ steps.version.outputs.version }}
+
+            ### Installation / Update
+            - **HACS**: Update notification will appear automatically
+            - **Manual**: Download `pik_outlet.zip`, extract to `config/custom_components/pik_outlet/`
+
+            After updating, restart Home Assistant.
+          files: pik_outlet.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true

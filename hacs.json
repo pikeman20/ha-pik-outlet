@@ -1,4 +1,8 @@
 {
-  "name": "PIK BLE Outlet",
-  "render_readme": true
+  "name": "PIK BLE 6-Switch Outlet",
+  "render_readme": true,
+  "homeassistant": "2024.1.0",
+  "zip_release": false,
+  "filename": "",
+  "content_in_root": false
 }

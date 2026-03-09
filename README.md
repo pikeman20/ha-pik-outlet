@@ -1,6 +1,8 @@
 # PIK BLE 6-Switch Outlet — Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/pik-electronics/ha-pik-outlet?style=flat-square)](https://github.com/pik-electronics/ha-pik-outlet/releases)
+[![Validate](https://github.com/pik-electronics/ha-pik-outlet/actions/workflows/validate.yml/badge.svg)](https://github.com/pik-electronics/ha-pik-outlet/actions/workflows/validate.yml)
 
 Home Assistant custom integration for the **PIK 6-Switch BLE Outlet** (2500W).
 
