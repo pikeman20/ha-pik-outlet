@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Callable
 
 from bleak.exc import BleakError
 
@@ -34,6 +35,7 @@ from homeassistant.const import CONF_ADDRESS
 from .const import (
     DOMAIN,
     POLL_INTERVAL_SECONDS,
+    RECONNECT_RETRY_SECONDS,
 )
 from .pik_ble import DeviceState, PikBLEClient
 
@@ -61,8 +63,55 @@ class PikOutletCoordinator(DataUpdateCoordinator[DeviceState]):
         self.client = client
         self.address: str = entry.data[CONF_ADDRESS]
 
+        # BLE advertisement watcher — cancelled on unload
+        self._ble_watch_cancel: Callable[[], None] | None = None
+
         # Wire push-path: BLE notifications → coordinator → entities
         self.client.set_state_callback(self._handle_state_update)
+
+    # ── BLE advertisement watcher (fast reconnect on power-on) ────────────────
+
+    def start_ble_watch(self) -> None:
+        """Register BLE advertisement callback for near-instant reconnect.
+
+        When the device powers back on it starts advertising immediately.
+        HA's bluetooth stack fires this callback within seconds, letting us
+        trigger a reconnect without waiting for the next poll interval.
+        """
+        from homeassistant.components.bluetooth import (
+            async_register_callback,
+            BluetoothCallbackMatcher,
+            BluetoothScanningMode,
+        )
+
+        self._ble_watch_cancel = async_register_callback(
+            self.hass,
+            self._handle_ble_advertisement,
+            BluetoothCallbackMatcher(address=self.address.upper()),
+            BluetoothScanningMode.ACTIVE,
+        )
+        _LOGGER.debug("PIK Outlet %s: BLE advertisement watcher started", self.address)
+
+    def stop_ble_watch(self) -> None:
+        """Cancel the BLE advertisement watcher."""
+        if self._ble_watch_cancel is not None:
+            self._ble_watch_cancel()
+            self._ble_watch_cancel = None
+            _LOGGER.debug("PIK Outlet %s: BLE advertisement watcher stopped", self.address)
+
+    @callback
+    def _handle_ble_advertisement(self, service_info, change) -> None:  # noqa: ANN001
+        """BLE advertisement seen — reconnect immediately if we are disconnected.
+
+        This fires when the device powers on and begins advertising, allowing
+        reconnection in seconds instead of waiting for the next poll interval.
+        """
+        if not self.client.is_connected:
+            _LOGGER.debug(
+                "PIK Outlet %s advertising — triggering immediate reconnect",
+                self.address,
+            )
+            self.hass.async_create_task(self.async_request_refresh())
 
     # ── Push path (notification-driven) ──────────────────────────────────────
 
@@ -90,10 +139,16 @@ class PikOutletCoordinator(DataUpdateCoordinator[DeviceState]):
                 _LOGGER.debug(
                     "PIK Outlet %s status polled successfully", self.address
                 )
+            # Reconnect succeeded — restore normal heartbeat interval
+            self.update_interval = timedelta(seconds=POLL_INTERVAL_SECONDS)
             return self.client.state
         except BleakError as exc:
+            # Device still offline — switch to faster retry interval so we
+            # recover promptly if the advertisement callback was missed.
+            self.update_interval = timedelta(seconds=RECONNECT_RETRY_SECONDS)
             raise UpdateFailed(f"BLE communication error: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
+            self.update_interval = timedelta(seconds=RECONNECT_RETRY_SECONDS)
             raise UpdateFailed(f"Unexpected error: {exc}") from exc
 
     async def _reconnect(self) -> None:

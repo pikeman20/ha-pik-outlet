@@ -29,7 +29,8 @@ MODE_FROM_LABEL: dict[str, str] = {v: k for k, v in MODE_LABELS.items()}
 CONF_ADDRESS = "address"
 
 # ── Timing ────────────────────────────────────────────────────────────────────
-POLL_INTERVAL_SECONDS = 60
+POLL_INTERVAL_SECONDS = 60       # heartbeat when connected
+RECONNECT_RETRY_SECONDS = 15     # fast-retry interval when disconnected
 CONNECT_TIMEOUT = 30.0
 COMMAND_TIMEOUT = 5.0
 AT_COMMAND_TIMEOUT = 8.0

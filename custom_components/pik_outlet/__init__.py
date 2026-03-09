@@ -162,6 +162,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # First connection + status query
     await coordinator.async_config_entry_first_refresh()
 
+    # Start BLE advertisement watcher for near-instant reconnect after power-on
+    coordinator.start_ble_watch()
+
     # Store coordinator for platforms and services
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -179,6 +182,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         coordinator: PikOutletCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator.stop_ble_watch()
         await coordinator.client.disconnect()
 
     # Remove services when no entries remain
