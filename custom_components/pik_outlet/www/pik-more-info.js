@@ -16,7 +16,7 @@
 (function () {
 'use strict';
 
-const VERSION      = '2.1.0';
+const VERSION      = '2.2.0';
 const DOMAIN       = 'pik_outlet';
 const POLL_MS      = 60;
 const POLL_TIMEOUT = 3000;
@@ -181,7 +181,7 @@ const MI_CSS = `
   --pik-border: var(--divider-color, #2a2e38);
   --pik-track: var(--divider-color, #2a2e38);
 }
-.mi-wrap { display: flex; flex-direction: column; gap: 10px; }
+.mi-wrap { display: flex; flex-direction: column; gap: 14px; padding: 8px 4px; }
 
 /* ── Main toggle row ── */
 .mi-toggle-row {
@@ -194,22 +194,14 @@ const MI_CSS = `
 }
 .mi-state.on { color: var(--pik-green); }
 
-/* ── Socket chips ── */
-.mi-chips { display: flex; gap: 4px; flex-wrap: wrap; }
-.mi-chip {
-  display: flex; align-items: center; gap: 4px;
-  padding: 4px 10px; border-radius: 16px;
-  font-size: 11px; font-weight: 600; cursor: pointer;
-  border: 1.5px solid var(--pik-border); background: transparent;
-  color: var(--pik-txt2); transition: all .15s;
+/* ── Socket label ── */
+.mi-socket-lbl {
+  font-size: 12px; font-weight: 600; color: var(--pik-txt2);
+  display: flex; align-items: center; gap: 6px;
 }
-.mi-chip:hover { background: var(--pik-surface); }
-.mi-chip.sel { background: var(--pik-blue); color: #fff; border-color: var(--pik-blue); }
-.mi-cdot { width: 6px; height: 6px; border-radius: 50%; }
-.mi-cdot.on  { background: var(--pik-green); }
-.mi-cdot.off { background: var(--pik-red); opacity: .5; }
-.mi-chip.sel .mi-cdot.on  { background: #b9f6ca; }
-.mi-chip.sel .mi-cdot.off { background: #ffcdd2; }
+.mi-socket-lbl .mi-sdot { width: 8px; height: 8px; border-radius: 50%; }
+.mi-socket-lbl .mi-sdot.on  { background: var(--pik-green); }
+.mi-socket-lbl .mi-sdot.off { background: var(--pik-red); opacity: .6; }
 
 /* ── Mode row ── */
 .mi-mode-row {
@@ -230,7 +222,7 @@ const MI_CSS = `
 .mi-mode-btn.sel-off { background: var(--pik-red-dim); color: var(--pik-red); border-color: var(--pik-red); }
 
 /* ── Divider ── */
-.mi-div { height: 1px; background: var(--pik-border); margin: 2px 0; }
+.mi-div { height: 1px; background: var(--pik-border); margin: 6px 0; }
 
 /* ── Tab rows (profile) ── */
 .tab-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
@@ -272,22 +264,14 @@ const MI_CSS = `
 }
 .toggle.on::after { transform: translateX(20px); }
 
-/* ── Warning banner ── */
-.warn {
-  display: none; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: 10px;
-  background: rgba(255,152,0,.1); color: #FFA726;
-  font-size: 12px; font-weight: 500;
+/* ── Timer enable row ── */
+.timer-row {
+  display: flex; align-items: center; justify-content: space-between;
 }
-.warn.show { display: flex; }
-.warn svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
-.warn span { flex: 1; }
-.warn-btn {
-  padding: 3px 10px; border-radius: 6px; border: 1px solid currentColor;
-  background: transparent; color: inherit; font-size: 11px; font-weight: 600;
-  cursor: pointer; white-space: nowrap;
+.timer-lbl {
+  font-size: 12px; font-weight: 600; color: var(--pik-txt2);
+  text-transform: uppercase; letter-spacing: .5px;
 }
-.warn-btn:hover { background: rgba(255,152,0,.15); }
 
 /* ── Clock SVG ── */
 .clock-wrap { display: flex; justify-content: center; }
@@ -433,8 +417,8 @@ class PikOutletMoreInfo extends HTMLElement {
     this._built    = false;
 
     // Schedule state (from pik-schedule-card)
-    this._onMin    = 7 * 60;
-    this._offMin   = 22 * 60;
+    this._onMin    = 0;
+    this._offMin   = 1440;
     this._days     = 0b0111110;
     this._enabled  = true;
     this._dirty    = false;
@@ -496,8 +480,8 @@ class PikOutletMoreInfo extends HTMLElement {
     <span id="miTog"></span>
   </div>
 
-  <!-- Socket chips -->
-  <div class="mi-chips" id="miChips"></div>
+  <!-- Socket label -->
+  <div class="mi-socket-lbl" id="miSocketLbl"></div>
 
   <!-- Socket mode -->
   <div class="mi-mode-row" id="miModeRow">
@@ -513,11 +497,10 @@ class PikOutletMoreInfo extends HTMLElement {
     <button class="toggle" id="toggle"></button>
   </div>
 
-  <!-- Warning banner: socket timer disabled -->
-  <div class="warn" id="warn">
-    <svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
-    <span>Socket timer is disabled</span>
-    <button class="warn-btn" id="warnBtn">Enable</button>
+  <!-- Socket timer enable toggle -->
+  <div class="timer-row" id="timerRow">
+    <span class="timer-lbl">Socket Timer</span>
+    <button class="toggle" id="timerTog"></button>
   </div>
 
   <!-- Circular clock with draggable handles -->
@@ -568,7 +551,7 @@ class PikOutletMoreInfo extends HTMLElement {
   <div class="mi-energy" id="miEnergy"></div>
 </div>`;
 
-    this._buildChips();
+    this._buildSocketLabel();
     this._buildToggle();
     this._buildModeButtons();
     this._buildProfileTabs();
@@ -578,15 +561,9 @@ class PikOutletMoreInfo extends HTMLElement {
     this._bindEvents();
   }
 
-  _buildChips() {
-    const c = this._$('miChips');
-    for (let i = 1; i <= SOCKETS; i++) {
-      const chip = document.createElement('button');
-      chip.className = 'mi-chip'; chip.dataset.idx = i;
-      chip.innerHTML = `<span class="mi-cdot"></span>Socket ${i}`;
-      chip.addEventListener('click', () => this._selectSocket(i));
-      c.appendChild(chip);
-    }
+  _buildSocketLabel() {
+    const c = this._$('miSocketLbl');
+    c.innerHTML = `<span class="mi-sdot"></span>Socket ${this._socket}`;
   }
 
   _buildToggle() {
@@ -699,8 +676,8 @@ class PikOutletMoreInfo extends HTMLElement {
       this._updateUI();
     });
 
-    // Warning → enable socket timer
-    this._$('warnBtn').addEventListener('click', () => this._enableSocketTimer());
+    // Socket timer toggle
+    this._$('timerTog').addEventListener('click', () => this._toggleSocketTimer());
 
     // Drag handles (pointer events → works for mouse + touch)
     ['hitOn','hOn'].forEach(id => {
@@ -745,13 +722,12 @@ class PikOutletMoreInfo extends HTMLElement {
 
     // Defaults for unconfigured profiles (all-zero)
     if (this._onMin === 0 && this._offMin === 0) {
-      this._onMin = 7 * 60;
-      this._offMin = 22 * 60;
+      this._offMin = 1440;
       if (this._days === 0) this._days = 0b0111110;
     }
-    // Safety: offMin must be > onMin
+    // Safety: offMin must be > onMin (allow 1440 = 24:00 for always-on)
     if (this._offMin <= this._onMin) {
-      this._offMin = Math.min(this._onMin + SNAP, 1435);
+      this._offMin = Math.min(this._onMin + SNAP, 1440);
     }
   }
 
@@ -802,14 +778,11 @@ class PikOutletMoreInfo extends HTMLElement {
     const tog = this._$('miMainTog');
     if (tog && swSt) { tog.hass = this._hass; tog.stateObj = swSt; }
 
-    // Socket chips
-    this._$('miChips').querySelectorAll('.mi-chip').forEach(c => {
-      const idx = +c.dataset.idx;
-      c.classList.toggle('sel', idx === this._socket);
-      const dot = c.querySelector('.mi-cdot');
-      const st = this._hass.states[this._swId(idx)];
-      dot.className = 'mi-cdot ' + (st && st.state === 'on' ? 'on' : 'off');
-    });
+    // Socket label
+    const lblDot = this._$('miSocketLbl')?.querySelector('.mi-sdot');
+    if (lblDot) {
+      lblDot.className = 'mi-sdot ' + (isOn ? 'on' : 'off');
+    }
 
     // Mode buttons
     const curMode = modeSt ? modeSt.state : '';
@@ -841,17 +814,19 @@ class PikOutletMoreInfo extends HTMLElement {
     // ── Enable toggle ──
     this._$('toggle').classList.toggle('on', this._enabled);
 
-    // ── Warning (socket timer disabled) ──
-    const socketOn = teSt && teSt.state === 'on';
-    this._$('warn').classList.toggle('show', teSt != null && !socketOn);
+    // ── Socket timer toggle ──
+    const socketTimerOn = teSt && teSt.state === 'on';
+    this._$('timerTog').classList.toggle('on', !!socketTimerOn);
+    this._$('timerRow').style.display = teEid ? '' : 'none';
 
     // ── SVG arcs ──
     const oa = min2deg(this._onMin);
     const fa = min2deg(this._offMin);
-    this._$('arcG').setAttribute('d', this._offMin > this._onMin ? arcD(oa, fa) : '');
+    const faClamp = Math.min(fa, 359.9);
+    this._$('arcG').setAttribute('d', this._offMin > this._onMin ? arcD(oa, faClamp) : '');
     const redParts = [];
     if (this._onMin > 0)     redParts.push(arcD(0, oa));
-    if (this._offMin < 1440) redParts.push(arcD(fa, 359.9));
+    if (this._offMin < 1440) redParts.push(arcD(faClamp, 359.9));
     this._$('arcR').setAttribute('d', redParts.join(' '));
 
     const dragging = !!this._drag;
@@ -928,11 +903,13 @@ class PikOutletMoreInfo extends HTMLElement {
   _onMove(e) {
     if (!this._drag) return;
     e.preventDefault();
-    const m = deg2min(this._getAngle(e));
+    let m = deg2min(this._getAngle(e));
     if (this._drag === 'on') {
-      this._onMin = Math.max(0, Math.min(m, this._offMin - SNAP));
+      this._onMin = Math.max(0, Math.min(m, (this._offMin === 1440 ? 1435 : this._offMin) - SNAP));
     } else {
-      this._offMin = Math.max(this._onMin + SNAP, Math.min(m, 1440 - SNAP));
+      // 0° (midnight) means 24:00 for the OFF handle
+      if (m === 0) m = 1440;
+      this._offMin = Math.max(this._onMin + SNAP, Math.min(m, 1440));
     }
     this._updateUI();
   }
@@ -965,12 +942,12 @@ class PikOutletMoreInfo extends HTMLElement {
 
     oh = Math.max(0, Math.min(23, oh));
     om = Math.max(0, Math.min(59, om));
-    fh = Math.max(0, Math.min(23, fh));
-    fm = Math.max(0, Math.min(59, fm));
+    fh = Math.max(0, Math.min(24, fh));
+    if (fh === 24) fm = 0; else fm = Math.max(0, Math.min(59, fm));
 
     let newOn  = oh * 60 + om;
     let newOff = fh * 60 + fm;
-    if (newOff <= newOn) newOff = Math.min(newOn + SNAP, 1439);
+    if (newOff <= newOn) newOff = Math.min(newOn + SNAP, 1440);
 
     this._onMin  = newOn;
     this._offMin = newOff;
@@ -984,7 +961,8 @@ class PikOutletMoreInfo extends HTMLElement {
     const el   = this._$(id);
     let val    = parseInt(el.value) || 0;
     const isH  = id === 'iOH' || id === 'iFH';
-    const max  = isH ? 23 : 59;
+    const isOffH = id === 'iFH';
+    const max  = isH ? (isOffH ? 24 : 23) : 59;
     const step = isH ? 1  : 5;
     val = e.key === 'ArrowUp'
       ? Math.min(max, val + step)
@@ -1077,14 +1055,18 @@ class PikOutletMoreInfo extends HTMLElement {
   /* ══════════════════════════════════════════════════════════════════════
      Actions
      ══════════════════════════════════════════════════════════════════════ */
-  async _enableSocketTimer() {
+  async _toggleSocketTimer() {
     if (!this._hass) return;
+    const teId = this._teId();
+    if (!teId) return;
+    const teSt = this._hass.states[teId];
+    const isOn = teSt && teSt.state === 'on';
     try {
-      await this._hass.callService('switch', 'turn_on', {
-        entity_id: this._teId(),
+      await this._hass.callService('switch', isOn ? 'turn_off' : 'turn_on', {
+        entity_id: teId,
       });
     } catch (err) {
-      console.error('PIK more-info: enable timer failed', err);
+      console.error('PIK more-info: toggle timer failed', err);
     }
   }
 
